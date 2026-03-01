@@ -2,16 +2,26 @@
 V+up Layer-by-Layer Analysis — "up within words" classifier
 =============================================================
 Same structure as vup_layer_analysis.py, but the classifier is trained on:
-  - Positive (label=1): "up" token embeddings from standalone "up" sentences
-  - Negative (label=0): "up" token embeddings from words containing "up"
-                        as a substring (e.g. "cup", "puppet", "rupture")
+  - Positive (label=1): "up" token embeddings pooled from two sources:
+        (a) standalone "up" sentences (e.g. "he looked up")
+        (b) words containing "up" as a substring (e.g. "cup", "puppet", "rupture")
+        Each source contributes up to N_TRAIN (1000) embeddings, which are
+        concatenated and then truncated to match the negative class size.
+  - Negative (label=0): random non-"up" tokens drawn from the same standalone
+        "up" sentences used in (a), up to N_TRAIN (1000) embeddings.
 
-This tests whether the model's representation of the "up" token in V+up
-phrases is more similar to the standalone particle "up" or to the "up"
-substring within ordinary words — i.e. whether the model treats it as a
-meaningful morpheme/particle or just a token sequence.
+  Training and validation sets are balanced (equal positive/negative),
+  so the effective training size is up to 1000 positive + 1000 negative = 2000
+  examples, and likewise for validation (N_VAL=1000 per class).
 
-The classifier is then evaluated on V+up phrases (same as before).
+  The classifier is evaluated on V+up phrases to ask whether the "up" token
+  in V+up contexts is represented more like any occurrence of the string "up"
+  (particle or subword) versus a completely unrelated token.
+
+  Note: this classifier does NOT distinguish standalone particle "up" from
+  subword "up" — both are treated as the positive class. For a classifier
+  that directly contrasts these two, a binary standalone-vs-subword design
+  would be needed instead.
 
 Usage:
     python vup_layer_analysis_upwords.py
@@ -46,8 +56,8 @@ RANDOM_SEED       = 964
 MAX_SEQ_LEN       = 128
 LOAD_IN_8BIT      = False
 DATA_DIR          = "../Data/Data_upsubword"
-VUP_PKL_PATH      = "corpus_results.pkl"
-UPWORD_PKL_PATH   = "corpus_results_upwords.pkl"
+VUP_PKL_PATH      = "../Data/corpus_results.pkl"
+UPWORD_PKL_PATH   = "../Data/corpus_results_upwords.pkl"
 
 N_TRAIN = 1000
 N_VAL   = 1000
