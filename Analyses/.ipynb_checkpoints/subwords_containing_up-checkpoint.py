@@ -1,36 +1,26 @@
 """
-V+up Layer-by-Layer Analysis — "up within words" classifier
-=============================================================
-Same structure as vup_layer_analysis.py, but the classifier is trained on:
-  - Positive (label=1): "up" token embeddings pooled from two sources:
-        (a) standalone "up" sentences (e.g. "he looked up")
-        (b) words containing "up" as a substring (e.g. "cup", "puppet", "rupture")
-        Each source contributes up to N_TRAIN (1000) embeddings, which are
-        concatenated and then truncated to match the negative class size.
-  - Negative (label=0): random non-"up" tokens drawn from the same standalone
-        "up" sentences used in (a), up to N_TRAIN (1000) embeddings.
+V+up Layer-by-Layer Analysis — "up morpheme" classifier
+=========================================================
+Trains a logistic regression classifier layer-by-layer on OLMo-3 7B hidden
+states to distinguish the "up" morpheme (standalone particle + up-within-word
+tokens) from random other tokens.
 
-  Training and validation sets are balanced (equal positive/negative),
-  so the effective training size is up to 1000 positive + 1000 negative = 2000
-  examples, and likewise for validation (N_VAL=1000 per class).
+  Positive (label=1): standalone "up" + tokens containing "up" as a subword
+  Negative (label=0): random other token from the same sentences
 
-  The classifier is evaluated on V+up phrases to ask whether the "up" token
-  in V+up contexts is represented more like any occurrence of the string "up"
-  (particle or subword) versus a completely unrelated token.
+Reads pre-built datasets from DATA_DIR (produced by build_datasets.py):
+    train.csv, val.csv, test.csv
 
-  Note: this classifier does NOT distinguish standalone particle "up" from
-  subword "up" — both are treated as the positive class. For a classifier
-  that directly contrasts these two, a binary standalone-vs-subword design
-  would be needed instead.
+Per-layer outputs saved to DATA_DIR:
+    layer_XX.csv, layer_XX_plot.png, all_layers_results.csv, layer_metadata.json
 
 Usage:
     python vup_layer_analysis_upwords.py
 
-Expects:
-    corpus_results.pkl         (Dataset 1, from create_datasets.py)
-    corpus_results_upwords.pkl (Dataset 2, from create_datasets.py)
+Requires build_datasets.py to have been run first.
 """
 
+import json
 import os
 import pickle
 import logging
@@ -50,17 +40,17 @@ from tqdm import tqdm
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
-MODEL_NAME        = "allenai/Olmo-3-1025-7B"
-BATCH_SIZE        = 100
-RANDOM_SEED       = 964
-MAX_SEQ_LEN       = 128
-LOAD_IN_8BIT      = False
-DATA_DIR          = "../Data/Data_upsubword"
-VUP_PKL_PATH      = "../Data/corpus_results.pkl"
-UPWORD_PKL_PATH   = "../Data/corpus_results_upwords.pkl"
+MODEL_NAME  = "allenai/Olmo-3-1025-7B"
+BATCH_SIZE  = 50
+RANDOM_SEED = 964
+MAX_SEQ_LEN = 128
+LOAD_IN_8BIT = False
+DATA_DIR    = "../Data/Data_upsubword"
+VUP_PKL_PATH = "../Data/corpus_results.pkl"
 
-N_TRAIN = 1000
-N_VAL   = 1000
+N_TRAIN         = 1000
+N_VAL           = 1000
+N_TEST_PER_TYPE = 20
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -71,42 +61,6 @@ random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 
 os.makedirs(DATA_DIR, exist_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# LOAD CORPUS RESULTS
-# ---------------------------------------------------------------------------
-
-def load_corpus_results():
-    log.info("Loading Dataset 1 (V+up) from %s ...", VUP_PKL_PATH)
-    with open(VUP_PKL_PATH, "rb") as f:
-        vup_sentences, vup_freq, up_sentences, up_freq = pickle.load(f)
-
-    log.info("Loading Dataset 2 (up-words) from %s ...", UPWORD_PKL_PATH)
-    with open(UPWORD_PKL_PATH, "rb") as f:
-        upword_sentences, upword_freq, _, _ = pickle.load(f)
-
-    log.info(
-        "V+up types: %d | standalone 'up' sentences: %d | up-word types: %d",
-        len(vup_sentences), len(up_sentences), len(upword_sentences),
-    )
-    assert len(up_sentences) >= N_TRAIN + N_VAL, (
-        f"Need at least {N_TRAIN + N_VAL} standalone 'up' sentences, "
-        f"got {len(up_sentences)}."
-    )
-
-    # Flatten upword sentences into a single list (we don't need per-word
-    # breakdown for training — we just need a pool of "up-within-word" embeddings)
-    all_upword_sents = []
-    for sents in upword_sentences.values():
-        all_upword_sents.extend(sents)
-    log.info("Total up-word sentences available for training: %d", len(all_upword_sents))
-    assert len(all_upword_sents) >= N_TRAIN + N_VAL, (
-        f"Need at least {N_TRAIN + N_VAL} up-word sentences, "
-        f"got {len(all_upword_sents)}."
-    )
-
-    return vup_sentences, vup_freq, up_sentences, up_freq, upword_sentences, all_upword_sents
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +76,6 @@ def load_model():
         tokenizer = AutoTokenizer.from_pretrained(
             MODEL_NAME, use_fast=False, trust_remote_code=True
         )
-
     if LOAD_IN_8BIT:
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME, load_in_8bit=True, device_map="auto"
@@ -134,150 +87,93 @@ def load_model():
     model.eval()
     log.info(
         "Model loaded. Layers: %d | hidden size: %d",
-        model.config.num_hidden_layers,
-        model.config.hidden_size,
+        model.config.num_hidden_layers, model.config.hidden_size,
     )
     return tokenizer, model
+
+
+# ---------------------------------------------------------------------------
+# LOAD DATASETS
+# ---------------------------------------------------------------------------
+
+def load_datasets():
+    """
+    Load train.csv, val.csv, and test.csv from DATA_DIR and reconstruct
+    position records for the layer loop.
+
+    Returns:
+        train_records          : list of (sentence, token_pos, label)
+        val_records            : list of (sentence, token_pos, label)
+        vup_positions          : dict {vup_type: [(sentence, token_pos, word), ...]}
+        vup_sentences_filtered : dict {vup_type: [sentence, ...]}
+    """
+    for fname in ("train.csv", "val.csv", "test.csv"):
+        path = os.path.join(DATA_DIR, fname)
+        assert os.path.exists(path), (
+            f"{path} not found — run build_datasets.py first."
+        )
+
+    train_df = pd.read_csv(os.path.join(DATA_DIR, "train.csv"))
+    val_df   = pd.read_csv(os.path.join(DATA_DIR, "val.csv"))
+    test_df  = pd.read_csv(os.path.join(DATA_DIR, "test.csv"))
+
+    log.info("Loaded train.csv (%d rows) | val.csv (%d rows) | test.csv (%d rows, %d types)",
+             len(train_df), len(val_df), len(test_df), test_df["verb_up"].nunique())
+    log.info("  Train — label=1: %d | label=0: %d",
+             (train_df.label == 1).sum(), (train_df.label == 0).sum())
+    log.info("  Val   — label=1: %d | label=0: %d",
+             (val_df.label == 1).sum(), (val_df.label == 0).sum())
+
+    train_records = list(zip(
+        train_df["sentence"],
+        train_df["token_position"].astype(int),
+        train_df["label"],
+    ))
+    val_records = list(zip(
+        val_df["sentence"],
+        val_df["token_position"].astype(int),
+        val_df["label"],
+    ))
+
+    vup_positions          = {}
+    vup_sentences_filtered = {}
+    for vup_type, group in test_df.groupby("verb_up"):
+        vup_positions[vup_type]          = list(zip(
+            group["sentence"],
+            group["token_position"].astype(int),
+            group["word"],
+        ))
+        vup_sentences_filtered[vup_type] = group["sentence"].tolist()
+
+    return train_records, val_records, vup_positions, vup_sentences_filtered
 
 
 # ---------------------------------------------------------------------------
 # EMBEDDING EXTRACTION
 # ---------------------------------------------------------------------------
 
-def find_up_token_index(tokenizer, input_ids):
-    tokens = [tokenizer.decode([tid]).strip().lower() for tid in input_ids]
-    for i in range(len(tokens) - 1, -1, -1):
-        if tokens[i] == "up":
-            return i
-    return None
-
-def find_up_subtoken_index(tokenizer, input_ids):
+def extract_embeddings_from_positions(records, model, tokenizer, layer_idx, desc="Extracting"):
     """
-    Find the index of the last token that either:
-      (a) contains "up" as a substring (e.g. "cup", "pup", "upped"), OR
-      (b) decodes exactly to "up" but appears inside a word that contains
-          "up" (i.e. is not a standalone particle)
-
-    Since we're calling this only on upword sentences (sentences selected
-    because they contain a word with "up" as substring), any "up" token
-    found here is the "up" portion of a larger word, not a standalone particle.
+    Extract hidden-state vectors at pre-computed token positions.
+    records: list of (sentence, token_position, label)
+    Returns (X, y) numpy arrays.
     """
-    tokens = [tokenizer.decode([tid]).strip().lower() for tid in input_ids]
-    for i in range(len(tokens) - 1, -1, -1):
-        if "up" in tokens[i]:   # catches "cup", "pup", "upped", AND "up" itself
-            return i
-    return None
+    sentences = [s for s, _, _ in records]
+    positions = [p for _, p, _ in records]
+    labels    = [l for _, _, l in records]
 
-
-def extract_embeddings_at_layer(
-    sentences,
-    tokenizer,
-    model,
-    layer_idx,
-    desc="Extracting",
-    token_finder="up_standalone",
-    also_extract_random_other=False,
-):
-    all_embeddings   = []
-    other_embeddings = []
-    valid_indices    = []
-    skipped          = 0
-    device           = next(model.parameters()).device
-    rng              = np.random.default_rng(RANDOM_SEED)
-
-    finder_fn = find_up_token_index if token_finder == "up_standalone" else find_up_subtoken_index
+    X, y_out, skipped = [], [], 0
+    device = next(model.parameters()).device
 
     with tqdm(total=len(sentences), desc=desc, unit="sent", leave=False) as pbar:
         for batch_start in range(0, len(sentences), BATCH_SIZE):
-            batch   = sentences[batch_start : batch_start + BATCH_SIZE]
+            batch_sents = sentences[batch_start : batch_start + BATCH_SIZE]
+            batch_pos   = positions[batch_start : batch_start + BATCH_SIZE]
+            batch_label = labels[batch_start   : batch_start + BATCH_SIZE]
+
             encoded = tokenizer(
-                batch, return_tensors="pt", padding=True,
+                batch_sents, return_tensors="pt", padding=True,
                 truncation=True, max_length=MAX_SEQ_LEN,
-            )
-            input_ids      = encoded["input_ids"].to(device)
-            attention_mask = encoded["attention_mask"].to(device)
-
-            with torch.no_grad():
-                outputs = model(
-                    input_ids=input_ids, attention_mask=attention_mask,
-                    output_hidden_states=True,
-                )
-
-            hidden = outputs.hidden_states[layer_idx + 1]
-
-            for i, (ids, mask) in enumerate(zip(input_ids, attention_mask)):
-                actual_len = mask.sum().item()
-                ids_list   = ids[:actual_len].tolist()
-                pos        = finder_fn(tokenizer, ids_list)
-
-                if pos is None:
-                    skipped += 1
-                    continue
-
-                all_embeddings.append(hidden[i, pos, :].float().cpu().numpy())
-                valid_indices.append(batch_start + i)
-
-                if also_extract_random_other:
-                    non_up_positions = [
-                        j for j in range(actual_len)
-                        if j != pos
-                        and tokenizer.decode([ids_list[j]]).strip().lower() not in ("", "up")
-                        and ids_list[j] not in tokenizer.all_special_ids
-                    ]
-                    if non_up_positions:
-                        rand_pos = rng.choice(non_up_positions)
-                        other_embeddings.append(hidden[i, rand_pos, :].float().cpu().numpy())
-                    else:
-                        other_embeddings.append(None)
-
-            pbar.update(len(batch))
-            pbar.set_postfix({"ok": len(all_embeddings), "skip": skipped})
-
-    if not all_embeddings:
-        raise ValueError(
-            f"No target tokens found at layer {layer_idx} with finder={token_finder}: {desc}"
-        )
-
-    up_embs = np.vstack(all_embeddings)
-
-    if also_extract_random_other:
-        valid_other = [(i, e) for i, e in enumerate(other_embeddings) if e is not None]
-        _, other_embs = zip(*valid_other) if valid_other else ([], [])
-        return up_embs, valid_indices, np.vstack(other_embs)
-
-    return up_embs, valid_indices
-    
-
-    
-def extract_vup_embeddings_at_layer(vup_sentences, tokenizer, model, layer_idx):
-    """
-    Extract "up" token embeddings for all V+up types in a single batched pass.
-    """
-    all_sents  = []
-    type_index = []
-    for vup_type, sents in vup_sentences.items():
-        for sent in sents:
-            all_sents.append(sent)
-            type_index.append(vup_type)
-
-    log.info(
-        "  Extracting V+up embeddings at layer %d: %d sentences across %d types ...",
-        layer_idx, len(all_sents), len(vup_sentences),
-    )
-
-    all_embeddings = []
-    skipped        = 0
-    device         = next(model.parameters()).device
-
-    with tqdm(total=len(all_sents), desc=f"Layer {layer_idx}: V+up", unit="sent", leave=False) as pbar:
-        for batch_start in range(0, len(all_sents), BATCH_SIZE):
-            batch   = all_sents[batch_start : batch_start + BATCH_SIZE]
-            encoded = tokenizer(
-                batch,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=MAX_SEQ_LEN,
             )
             input_ids      = encoded["input_ids"].to(device)
             attention_mask = encoded["attention_mask"].to(device)
@@ -291,72 +187,119 @@ def extract_vup_embeddings_at_layer(vup_sentences, tokenizer, model, layer_idx):
 
             hidden = outputs.hidden_states[layer_idx + 1]
 
-            for i, (ids, mask) in enumerate(zip(input_ids, attention_mask)):
-                actual_len = mask.sum().item()
-                ids_list   = ids[:actual_len].tolist()
-                up_pos     = find_up_token_index(tokenizer, ids_list)
+            for i, (pos, lbl) in enumerate(zip(batch_pos, batch_label)):
+                actual_len = attention_mask[i].sum().item()
+                if pos >= actual_len:
+                    skipped += 1
+                    continue
+                X.append(hidden[i, pos, :].float().cpu().numpy())
+                y_out.append(lbl)
 
-                if up_pos is None:
+            pbar.update(len(batch_sents))
+            pbar.set_postfix({"ok": len(X), "skip": skipped})
+
+    if skipped:
+        log.warning("  Layer %d: %d examples skipped (position beyond truncation)",
+                    layer_idx, skipped)
+
+    return np.vstack(X), np.array(y_out)
+
+
+def extract_vup_embeddings_from_positions(vup_positions, model, tokenizer, layer_idx):
+    """
+    Extract 'up' token embeddings for all V+up types using pre-computed positions.
+    Returns dict: {vup_type: np.ndarray of shape (n_sentences, hidden_size)}
+    """
+    all_sents, all_pos, type_index = [], [], []
+    for vup_type, records in vup_positions.items():
+        for sent, pos, _ in records:
+            all_sents.append(sent)
+            all_pos.append(pos)
+            type_index.append(vup_type)
+
+    log.info("  Extracting V+up embeddings at layer %d: %d sentences, %d types ...",
+             layer_idx, len(all_sents), len(vup_positions))
+
+    all_embeddings, skipped = [], 0
+    device = next(model.parameters()).device
+
+    with tqdm(total=len(all_sents), desc=f"Layer {layer_idx}: V+up", unit="sent", leave=False) as pbar:
+        for batch_start in range(0, len(all_sents), BATCH_SIZE):
+            batch_sents = all_sents[batch_start : batch_start + BATCH_SIZE]
+            batch_pos   = all_pos[batch_start  : batch_start + BATCH_SIZE]
+
+            encoded = tokenizer(
+                batch_sents, return_tensors="pt", padding=True,
+                truncation=True, max_length=MAX_SEQ_LEN,
+            )
+            input_ids      = encoded["input_ids"].to(device)
+            attention_mask = encoded["attention_mask"].to(device)
+
+            with torch.no_grad():
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    output_hidden_states=True,
+                )
+
+            hidden = outputs.hidden_states[layer_idx + 1]
+
+            for i, pos in enumerate(batch_pos):
+                actual_len = attention_mask[i].sum().item()
+                if pos >= actual_len:
                     skipped += 1
                     all_embeddings.append(None)
                     continue
+                all_embeddings.append(hidden[i, pos, :].float().cpu().numpy())
 
-                all_embeddings.append(hidden[i, up_pos, :].float().cpu().numpy())
-
-            pbar.update(len(batch))
+            pbar.update(len(batch_sents))
             pbar.set_postfix({"skip": skipped})
 
-    # Split back out by type
-    vup_embeddings = {vup_type: [] for vup_type in vup_sentences}
+    vup_embeddings = {vup_type: [] for vup_type in vup_positions}
     for emb, vup_type in zip(all_embeddings, type_index):
         if emb is not None:
             vup_embeddings[vup_type].append(emb)
 
-    vup_embeddings = {k: np.vstack(v) for k, v in vup_embeddings.items() if len(v) > 0}
-    log.info("  Layer %d V+up done: %d types | %d skipped", layer_idx, len(vup_embeddings), skipped)
+    vup_embeddings = {k: np.vstack(v) for k, v in vup_embeddings.items() if v}
+    log.info("  Layer %d V+up done: %d types | %d skipped",
+             layer_idx, len(vup_embeddings), skipped)
     return vup_embeddings
 
 
 # ---------------------------------------------------------------------------
 # CLASSIFIER
 # ---------------------------------------------------------------------------
-def train_classifier(X_pos_standalone, X_pos_upword, X_neg_train, X_pos_standalone_val, X_pos_upword_val, X_neg_val):
-    """
-    Positive (label=1): standalone 'up' + 'up'-within-word embeddings combined
-    Negative (label=0): random other token embeddings
-    """
-    # Combine both positive sources
-    X_pos_train = np.vstack([X_pos_standalone, X_pos_upword])
-    X_pos_val   = np.vstack([X_pos_standalone_val, X_pos_upword_val])
 
-    min_train = min(len(X_pos_train), len(X_neg_train))
-    min_val   = min(len(X_pos_val),   len(X_neg_val))
+def train_classifier(X_train, y_train, X_val, y_val):
+    """Logistic regression with class balancing by majority truncation."""
+    pos_idx_tr = np.where(y_train == 1)[0]
+    neg_idx_tr = np.where(y_train == 0)[0]
+    n_tr       = min(len(pos_idx_tr), len(neg_idx_tr))
+    idx_tr     = np.concatenate([pos_idx_tr[:n_tr], neg_idx_tr[:n_tr]])
+    X_tr, y_tr = X_train[idx_tr], y_train[idx_tr]
 
-    X_pos_train = X_pos_train[:min_train]
-    X_neg_train = X_neg_train[:min_train]
-    X_pos_val   = X_pos_val[:min_val]
-    X_neg_val   = X_neg_val[:min_val]
+    pos_idx_va = np.where(y_val == 1)[0]
+    neg_idx_va = np.where(y_val == 0)[0]
+    n_va       = min(len(pos_idx_va), len(neg_idx_va))
+    idx_va     = np.concatenate([pos_idx_va[:n_va], neg_idx_va[:n_va]])
+    X_va, y_va = X_val[idx_va], y_val[idx_va]
 
-    log.info("  Train: %d 'up' (standalone+upword) + %d other | Val: %d + %d",
-             min_train, min_train, min_val, min_val)
+    log.info("  Train: %d pos + %d neg | Val: %d pos + %d neg", n_tr, n_tr, n_va, n_va)
 
     scaler  = StandardScaler()
-    X_train = scaler.fit_transform(np.vstack([X_pos_train, X_neg_train]))
-    y_train = np.array([1] * min_train + [0] * min_train)
+    X_tr_sc = scaler.fit_transform(X_tr)
+    X_va_sc = scaler.transform(X_va)
 
     clf = LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, C=1.0)
-    clf.fit(X_train, y_train)
+    clf.fit(X_tr_sc, y_tr)
 
-    cv      = cross_val_score(clf, X_train, y_train, cv=5, scoring="accuracy")
-    cv_mean = cv.mean()
-    cv_std  = cv.std()
+    cv      = cross_val_score(clf, X_tr_sc, y_tr, cv=5, scoring="accuracy")
+    cv_mean, cv_std = cv.mean(), cv.std()
 
-    X_val     = scaler.transform(np.vstack([X_pos_val, X_neg_val]))
-    y_val     = np.array([1] * min_val + [0] * min_val)
-    val_preds = clf.predict(X_val)
-    val_acc   = (val_preds == y_val).mean()
-    up_acc    = (val_preds[:min_val] == 1).mean()
-    other_acc = (val_preds[min_val:] == 0).mean()
+    val_preds = clf.predict(X_va_sc)
+    val_acc   = (val_preds == y_va).mean()
+    up_acc    = (val_preds[y_va == 1] == 1).mean()
+    other_acc = (val_preds[y_va == 0] == 0).mean()
 
     log.info("  Train CV: %.3f±%.3f | Val: %.3f (up=%.3f, other=%.3f)",
              cv_mean, cv_std, val_acc, up_acc, other_acc)
@@ -364,26 +307,30 @@ def train_classifier(X_pos_standalone, X_pos_upword, X_neg_train, X_pos_standalo
     return clf, scaler, {
         "cv_mean": cv_mean, "cv_std": cv_std,
         "val_acc": val_acc, "up_acc": up_acc, "other_acc": other_acc,
+        "n_train_pos": int(n_tr), "n_train_neg": int(n_tr),
+        "n_val_pos":   int(n_va), "n_val_neg":   int(n_va),
     }
+
 
 # ---------------------------------------------------------------------------
 # EVALUATION
 # ---------------------------------------------------------------------------
 
-def evaluate_vup(clf, scaler, vup_sentences, vup_embeddings, vup_freq, layer_idx):
+def evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, layer_idx):
     rows = []
     for vup_type, embs in vup_embeddings.items():
         X_scaled = scaler.transform(embs)
         preds    = clf.predict(X_scaled)
         probs    = clf.predict_proba(X_scaled)[:, 1]
         logits   = clf.decision_function(X_scaled)
+        sents    = [sent for sent, _, _ in vup_positions[vup_type]]
 
         for j, (pred, prob, logit) in enumerate(zip(preds, probs, logits)):
             rows.append({
                 "layer":           layer_idx,
                 "verb_up":         vup_type,
                 "frequency":       vup_freq[vup_type],
-                "sentence":        vup_sentences[vup_type][j],
+                "sentence":        sents[j] if j < len(sents) else "",
                 "classifier_pred": int(pred),
                 "up_probability":  round(float(prob), 4),
                 "logit":           round(float(logit), 4),
@@ -431,7 +378,7 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
         cmap="RdYlGn", alpha=0.7, edgecolors="grey", linewidths=0.3, s=60,
     )
     cbar = fig.colorbar(sc, ax=ax)
-    cbar.set_label("Mean P(standalone-up-like)", fontsize=10)
+    cbar.set_label("Mean P(up-morpheme-like)", fontsize=10)
 
     poly_deg = 2
     coeffs   = np.polyfit(log_freq, logits, poly_deg)
@@ -450,11 +397,9 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
 
     ax.axhline(0, color="grey", linestyle="--", linewidth=0.8,
                label="Decision boundary (logit=0)")
-    ax.xaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda x, _: f"{int(10**x):,}")
-    )
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(10**x):,}"))
     ax.set_xlabel("Corpus frequency (log scale)", fontsize=11)
-    ax.set_ylabel("Mean logit (higher = more standalone-'up'-like)", fontsize=11)
+    ax.set_ylabel("Mean logit (higher = more up-morpheme-like)", fontsize=11)
     ax.set_title(f"V+up compositionality — Layer {layer_idx}\n(upword classifier)", fontsize=12)
     ax.legend(fontsize=9)
 
@@ -478,8 +423,7 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
         x_pos = bar.get_width() + 0.05 if bar.get_width() >= 0 else bar.get_width() - 0.05
         ha    = "left" if bar.get_width() >= 0 else "right"
         ax2.text(x_pos, bar.get_y() + bar.get_height() / 2,
-                 f"n={row['frequency']:,}", va="center", ha=ha,
-                 fontsize=7, color="dimgray")
+                 f"n={row['frequency']:,}", va="center", ha=ha, fontsize=7, color="dimgray")
 
     ax2.axvline(0, color="grey", linestyle="--", linewidth=0.8)
     ax2.set_xlabel("Mean logit", fontsize=11)
@@ -497,57 +441,55 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
 # ---------------------------------------------------------------------------
 
 def main():
-    vup_sentences, vup_freq, up_sentences, up_freq, upword_sentences, all_upword_sents = \
-        load_corpus_results()
-
     tokenizer, model = load_model()
     n_layers = model.config.num_hidden_layers
     log.info("Will iterate over %d transformer layers (0 to %d)", n_layers, n_layers - 1)
 
-    all_layer_dfs = []
+    train_records, val_records, vup_positions, vup_sentences_filtered = load_datasets()
+
+    with open(VUP_PKL_PATH, "rb") as f:
+        _, vup_freq, _, _ = pickle.load(f)
+
+    all_layer_dfs  = []
+    layer_metadata = []
 
     for layer_idx in range(n_layers):
         log.info("=" * 60)
         log.info("LAYER %d / %d", layer_idx, n_layers - 1)
         log.info("=" * 60)
 
-        # --- Extract standalone 'up' embeddings (positive class) ---
-        log.info("  Extracting standalone 'up' embeddings ...")
-        # --- Extract standalone 'up' embeddings + random other tokens (negative class) ---
-        up_embs, _, other_embs = extract_embeddings_at_layer(
-            up_sentences, tokenizer, model, layer_idx,
-            desc=f"Layer {layer_idx}: standalone 'up'",
-            token_finder="up_standalone",
-            also_extract_random_other=True,
+        X_train, y_train = extract_embeddings_from_positions(
+            train_records, model, tokenizer, layer_idx,
+            desc=f"Layer {layer_idx}: train",
+        )
+        X_val, y_val = extract_embeddings_from_positions(
+            val_records, model, tokenizer, layer_idx,
+            desc=f"Layer {layer_idx}: val",
         )
 
-        # --- Extract 'up'-within-word embeddings (also positive class) ---
-        upword_embs, _ = extract_embeddings_at_layer(
-            all_upword_sents, tokenizer, model, layer_idx,
-            desc=f"Layer {layer_idx}: up-within-word",
-            token_finder="up_subtoken",
+        clf, scaler, metrics = train_classifier(X_train, y_train, X_val, y_val)
+
+        layer_metadata.append({
+            "layer":            layer_idx,
+            "train_n_positive": metrics["n_train_pos"],
+            "train_n_negative": metrics["n_train_neg"],
+            "train_n_total":    metrics["n_train_pos"] + metrics["n_train_neg"],
+            "val_n_positive":   metrics["n_val_pos"],
+            "val_n_negative":   metrics["n_val_neg"],
+            "val_n_total":      metrics["n_val_pos"] + metrics["n_val_neg"],
+            "cv_mean":          round(metrics["cv_mean"],   6),
+            "cv_std":           round(metrics["cv_std"],    6),
+            "val_acc":          round(metrics["val_acc"],   6),
+            "val_up_acc":       round(metrics["up_acc"],    6),
+            "val_other_acc":    round(metrics["other_acc"], 6),
+        })
+
+        vup_embeddings = extract_vup_embeddings_from_positions(
+            vup_positions, model, tokenizer, layer_idx
         )
 
-        # Train/val split
-        up_train,     up_val     = up_embs[:N_TRAIN],     up_embs[N_TRAIN:N_TRAIN + N_VAL]
-        upword_train, upword_val = upword_embs[:N_TRAIN], upword_embs[N_TRAIN:N_TRAIN + N_VAL]
-        other_train,  other_val  = other_embs[:N_TRAIN],  other_embs[N_TRAIN:N_TRAIN + N_VAL]
+        layer_df = evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, layer_idx)
 
-        # --- Train classifier ---
-        clf, scaler, metrics = train_classifier(
-            up_train, upword_train, other_train,
-            up_val,   upword_val,   other_val,
-        )
-
-        # --- Extract V+up embeddings ---
-        vup_embeddings = extract_vup_embeddings_at_layer(
-            vup_sentences, tokenizer, model, layer_idx
-        )
-
-        # --- Evaluate ---
-        layer_df = evaluate_vup(clf, scaler, vup_sentences, vup_embeddings, vup_freq, layer_idx)
-
-        # --- Save ---
         csv_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}.csv")
         layer_df.to_csv(csv_path, index=False)
         log.info("  Saved: %s (%d rows)", csv_path, len(layer_df))
@@ -557,16 +499,28 @@ def main():
 
         all_layer_dfs.append(layer_df)
 
-        # --- Free memory ---
-        del up_embs, upword_embs, other_embs, up_train, up_val, upword_train, upword_val, other_train, other_val, vup_embeddings
+        del X_train, y_train, X_val, y_val, vup_embeddings
         torch.cuda.empty_cache()
 
-    # --- Merge all layers ---
-    combined_df   = pd.concat(all_layer_dfs, ignore_index=True)
-    combined_path = os.path.join(DATA_DIR, "all_layers_results.csv")
-    combined_df.to_csv(combined_path, index=False)
+    combined_df = pd.concat(all_layer_dfs, ignore_index=True)
+    combined_df.to_csv(os.path.join(DATA_DIR, "all_layers_results.csv"), index=False)
     log.info("=" * 60)
-    log.info("Done. Combined CSV: %s (%d rows)", combined_path, len(combined_df))
+    log.info("Done. Combined CSV saved.")
+
+    metadata = {
+        "model":            MODEL_NAME,
+        "n_layers":         n_layers,
+        "random_seed":      RANDOM_SEED,
+        "n_train":          N_TRAIN,
+        "n_val":            N_VAL,
+        "n_test_per_type":  N_TEST_PER_TYPE,
+        "n_test_vup_types": len(vup_sentences_filtered),
+        "classifier":       "LogisticRegression(C=1.0, max_iter=1000)",
+        "layers":           layer_metadata,
+    }
+    with open(os.path.join(DATA_DIR, "layer_metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+    log.info("Layer metadata saved.")
     log.info("=" * 60)
 
 
