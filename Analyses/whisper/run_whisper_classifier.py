@@ -365,9 +365,9 @@ def main():
     # Use C4 corpus frequencies if a pkl is provided; fall back to LibriSpeech counts
     if args.vup_pkl:
         with open(args.vup_pkl, "rb") as f:
-            corpus = pickle.load(f)
-        c4_freq = dict(corpus["vup_freq"])
-        log.info("Loaded C4 V+up frequencies from %s (%d types)", args.vup_pkl, len(c4_freq))
+            vup_sentences, vup_freq, up_sentences, up_freq = pickle.load(f)
+        c4_freq = dict(vup_freq)
+        log.info("Loaded C4 V+up frequencies from %s (%d types)", args.vup_pkl, len(vup_freq))
         # Report frequency spread for qualifying types
         freqs = sorted(c4_freq.get(vt, 0) for vt in qualifying)
         if freqs:
