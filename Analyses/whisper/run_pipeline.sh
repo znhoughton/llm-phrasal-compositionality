@@ -16,6 +16,7 @@ set -euo pipefail
 
 SPLIT="${1:-train.clean.100}"
 DATA_DIR="../../Data/whisper"
+VUP_PKL="../../Data/corpus_results.pkl"
 MODEL="openai/whisper-small"
 DEVICE="cuda"
 
@@ -35,7 +36,8 @@ echo "--- Step 2: layer-by-layer encoder + decoder classifier ---"
 python run_whisper_classifier.py \
   --data-dir "$DATA_DIR" \
   --model    "$MODEL"    \
-  --device   "$DEVICE"
+  --device   "$DEVICE"   \
+  --vup-pkl  "$VUP_PKL"
 
 echo ""
 echo "========================================"

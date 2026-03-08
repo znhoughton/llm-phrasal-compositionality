@@ -33,6 +33,7 @@ import argparse
 import json
 import logging
 import os
+import pickle
 import random
 
 import numpy as np
@@ -85,6 +86,12 @@ def parse_args():
     parser.add_argument(
         "--device", default="cuda",
         help="Device. Default: cuda",
+    )
+    parser.add_argument(
+        "--vup-pkl", default=None,
+        help="Path to corpus_results.pkl (from create_dataset.py / C4). "
+             "If provided, the 'frequency' column uses C4 counts instead of "
+             "LibriSpeech occurrence counts. Default: None",
     )
     return parser.parse_args()
 
@@ -355,6 +362,25 @@ def main():
 
     train_df, val_df, test_df, qualifying, vup_counts = build_splits(df)
 
+    # Use C4 corpus frequencies if a pkl is provided; fall back to LibriSpeech counts
+    if args.vup_pkl:
+        with open(args.vup_pkl, "rb") as f:
+            corpus = pickle.load(f)
+        c4_freq = dict(corpus["vup_freq"])
+        log.info("Loaded C4 V+up frequencies from %s (%d types)", args.vup_pkl, len(c4_freq))
+        # Report frequency spread for qualifying types
+        freqs = sorted(c4_freq.get(vt, 0) for vt in qualifying)
+        if freqs:
+            import numpy as np
+            log.info(
+                "C4 frequency spread across %d qualifying V+up types: "
+                "min=%d, median=%d, max=%d",
+                len(freqs), freqs[0], int(np.median(freqs)), freqs[-1],
+            )
+    else:
+        c4_freq = vup_counts
+        log.info("No --vup-pkl provided; using LibriSpeech occurrence counts as frequency.")
+
     # ----------------------------------------------------------------
     # Extract embeddings for train, val, test in one pass each
     # ----------------------------------------------------------------
@@ -447,7 +473,7 @@ def main():
             })
 
             layer_df = evaluate_vup(
-                clf, scaler, test_per_layer[li], vup_counts, li, component
+                clf, scaler, test_per_layer[li], c4_freq, li, component
             )
             csv_out = os.path.join(comp_dir, f"layer_{li:02d}.csv")
             layer_df.to_csv(csv_out, index=False)
