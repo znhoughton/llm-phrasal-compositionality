@@ -43,6 +43,7 @@ Expects:
     corpus_results_upwords.pkl (from create_datasets.py)
 """
 
+import argparse
 import os
 import pickle
 import logging
@@ -53,23 +54,71 @@ import pandas as pd
 from transformers import AutoTokenizer
 
 # ---------------------------------------------------------------------------
-# CONFIG
+# CONFIG (defaults; all overridable via CLI — see --help)
 # ---------------------------------------------------------------------------
-MODEL_NAME         = "allenai/Olmo-3-1025-7B"
-BATCH_SIZE         = 350
-RANDOM_SEED        = 964
-MAX_SEQ_LEN        = 128
-DATA_DIR_UPSUBWORD = "../Data/Data_upsubword"
-DATA_DIR_UP        = "../Data/Data_up"
-VUP_PKL_PATH       = "../Data/corpus_results.pkl"
-UPWORD_PKL_PATH    = "../Data/corpus_results_upwords.pkl"
-
-N_TRAIN          = 1000
-N_VAL            = 1000
-N_TEST_PER_TYPE  = 20
+BATCH_SIZE      = 350
+RANDOM_SEED     = 964
+MAX_SEQ_LEN     = 128
+N_TRAIN         = 1000
+N_VAL           = 1000
+N_TEST_PER_TYPE = 20
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Build train/val/test CSVs from corpus pickle files."
+    )
+    parser.add_argument(
+        "--model",
+        default="allenai/Olmo-3-1025-7B",
+        help="HuggingFace model ID (used to load the tokenizer). "
+             "Default: allenai/Olmo-3-1025-7B",
+    )
+    parser.add_argument(
+        "--data-dir-up",
+        default="../Data/olmo-3-7b/Data_up",
+        help="Output directory for the standalone-up dataset. "
+             "Default: ../Data/olmo-3-7b/Data_up",
+    )
+    parser.add_argument(
+        "--data-dir-upsubword",
+        default="../Data/olmo-3-7b/Data_upsubword",
+        help="Output directory for the up-subword dataset. "
+             "Default: ../Data/olmo-3-7b/Data_upsubword",
+    )
+    parser.add_argument(
+        "--vup-pkl",
+        default="../Data/corpus_results.pkl",
+        help="Path to corpus_results.pkl (produced by create_dataset.py). "
+             "Default: ../Data/corpus_results.pkl",
+    )
+    parser.add_argument(
+        "--upword-pkl",
+        default="../Data/corpus_results_upwords.pkl",
+        help="Path to corpus_results_upwords.pkl (produced by create_dataset.py). "
+             "Default: ../Data/corpus_results_upwords.pkl",
+    )
+    parser.add_argument(
+        "--corpus-stats-pkl",
+        default=None,
+        help="Path to corpus stats pkl produced by get_babylm_corpus_stats.py or "
+             "get_olmo_corpus_stats.py. Contains (vup_freq, verb_freq, ftp). "
+             "If provided, an 'ftp' column (P(up|V)) is added to test.csv. "
+             "Default: None (ftp column omitted)",
+    )
+    return parser.parse_args()
+
+
+args = parse_args()
+MODEL_NAME         = args.model
+DATA_DIR_UP        = args.data_dir_up
+DATA_DIR_UPSUBWORD = args.data_dir_upsubword
+VUP_PKL_PATH       = args.vup_pkl
+UPWORD_PKL_PATH    = args.upword_pkl
+CORPUS_STATS_PKL   = args.corpus_stats_pkl
 
 random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
@@ -333,16 +382,28 @@ def build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, toke
         make_rows(neg_upword_val_resolved,    label=0, source="other_token_from_upword")
     )
 
+    # Load FTP values if corpus stats pkl was provided
+    ftp = {}
+    if CORPUS_STATS_PKL is not None:
+        log.info("Loading corpus stats (FTP) from %s ...", CORPUS_STATS_PKL)
+        with open(CORPUS_STATS_PKL, "rb") as f:
+            _, _, ftp = pickle.load(f)
+        log.info("  FTP values loaded for %d V+up types", len(ftp))
+
     test_rows = []
     for vup_type, type_records in vup_positions.items():
+        ftp_val = ftp.get(vup_type, float("nan")) if ftp else float("nan")
         for sent, pos, word in type_records:
-            test_rows.append({
+            row = {
                 "verb_up":        vup_type,
                 "frequency":      vup_freq[vup_type],
                 "word":           word,
                 "sentence":       sent,
                 "token_position": pos,
-            })
+            }
+            if CORPUS_STATS_PKL is not None:
+                row["ftp"] = ftp_val
+            test_rows.append(row)
     test_df = pd.DataFrame(test_rows).sort_values(
         ["frequency", "verb_up"], ascending=[False, True]
     ).reset_index(drop=True)
@@ -389,6 +450,12 @@ def main():
     vup_sentences, vup_freq, up_sentences, all_upword_pairs = load_corpus()
     tokenizer = load_tokenizer()
     build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, tokenizer)
+    if CORPUS_STATS_PKL is None:
+        log.warning(
+            "No --corpus-stats-pkl provided. The 'ftp' column will be absent from test.csv. "
+            "Run get_olmo_corpus_stats.py or get_babylm_corpus_stats.py first, "
+            "then re-run with --corpus-stats-pkl."
+        )
 
 
 if __name__ == "__main__":
