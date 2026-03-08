@@ -66,6 +66,7 @@ llm-phrasal-compositionality/
 | BabyLM OPT-125m | `znhoughton/opt-babylm-125m-64eps-seed964` | 12 |
 | BabyLM OPT-350m | `znhoughton/opt-babylm-350m-64eps-seed964` | 24 |
 | BabyLM OPT-1.3b | `znhoughton/opt-babylm-1.3b-64eps-seed964` | 24 |
+| Whisper-small | `openai/whisper-small` | 12 enc + 12 dec |
 
 ---
 
@@ -220,6 +221,21 @@ python subwords_containing_up.py \
 Probes Whisper-small's **encoder** (audio) and **decoder** (text) representations
 using LibriSpeech as the speech corpus. Requires WhisperX for forced word-level
 alignment. Best run on a GPU machine.
+
+### Step 0 — Check data sufficiency *(optional)*
+
+Scans LibriSpeech transcripts (no audio decoding) and reports standalone "up"
+counts, V+up type frequencies, and whether targets are met. Useful before
+committing GPU time on a remote machine.
+
+```bash
+cd Analyses/
+python check_whisper_corpus.py --source librispeech --librispeech-split train.clean.360
+```
+
+Target: ≥2,000 standalone "up" utterances and ≥20 qualifying V+up types (≥5
+occurrences each). `train.clean.360` is sufficient on both counts; `train.clean.100`
+is not (too few standalone "up").
 
 ### Step 1 — Build the LibriSpeech dataset *(one-time)*
 

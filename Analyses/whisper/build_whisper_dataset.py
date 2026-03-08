@@ -45,11 +45,13 @@ import logging
 import os
 import random
 
+import io
+
 import numpy as np
 import pandas as pd
 import soundfile as sf
 import spacy
-from datasets import load_dataset
+from datasets import Audio, load_dataset
 from tqdm import tqdm
 
 import whisperx
@@ -212,6 +214,10 @@ def main():
         )
     log.info("Loaded %d utterances.", len(ds))
 
+    # Disable HuggingFace audio auto-decoding (avoids torchcodec/FFmpeg dependency).
+    # We decode audio manually with soundfile below.
+    ds = ds.cast_column("audio", Audio(decode=False))
+
     log.info("Loading spaCy model ...")
     nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
     nlp.add_pipe("sentencizer")
@@ -231,8 +237,17 @@ def main():
         if not text or "up" not in text.lower():
             continue
 
-        audio_array = np.array(item["audio"]["array"], dtype=np.float32)
-        sr = item["audio"]["sampling_rate"]
+        audio_raw = item["audio"]
+        try:
+            if audio_raw.get("bytes"):
+                audio_array, sr = sf.read(io.BytesIO(audio_raw["bytes"]))
+            else:
+                audio_array, sr = sf.read(audio_raw["path"])
+            audio_array = audio_array.astype(np.float32)
+        except Exception as e:
+            log.debug("Audio read failed: %s", e)
+            n_skipped += 1
+            continue
         if sr != 16000:
             log.warning("Unexpected sample rate %d — skipping", sr)
             n_skipped += 1
