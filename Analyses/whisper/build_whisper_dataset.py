@@ -179,15 +179,36 @@ def main():
     audio_dir = os.path.join(args.out_dir, "audio")
     os.makedirs(audio_dir, exist_ok=True)
 
-    log.info("Loading LibriSpeech split '%s' from HuggingFace ...", args.split)
-    try:
-        ds = load_dataset(
-            "openslr/librispeech_asr", "clean", split=args.split,
-            trust_remote_code=True,
-        )
-    except Exception:
-        ds = load_dataset(
-            "librispeech_asr", "clean", split=args.split, trust_remote_code=True,
+    # Build list of split names to try: the user-supplied name, plus a variant
+    # that strips/adds the "clean." prefix (older librispeech_asr caches use
+    # "train.100"/"train.360" while newer openslr/librispeech_asr uses
+    # "train.clean.100"/"train.clean.360").
+    split = args.split
+    if split.startswith("train.clean."):
+        split_alt = split.replace("train.clean.", "train.")
+    elif split.startswith("train.") and not split.startswith("train.clean."):
+        split_alt = split.replace("train.", "train.clean.", 1)
+    else:
+        split_alt = split
+
+    log.info("Loading LibriSpeech split '%s' from HuggingFace ...", split)
+    ds = None
+    for repo, sp in [
+        ("openslr/librispeech_asr", split),
+        ("librispeech_asr",         split),
+        ("openslr/librispeech_asr", split_alt),
+        ("librispeech_asr",         split_alt),
+    ]:
+        try:
+            ds = load_dataset(repo, "clean", split=sp, trust_remote_code=True)
+            log.info("Loaded from %s, split=%s", repo, sp)
+            break
+        except Exception:
+            continue
+    if ds is None:
+        raise RuntimeError(
+            f"Could not load LibriSpeech split '{split}' (also tried '{split_alt}'). "
+            "Check your --split argument and datasets library version."
         )
     log.info("Loaded %d utterances.", len(ds))
 
