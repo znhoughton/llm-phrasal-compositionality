@@ -12,11 +12,11 @@
 set -euo pipefail
 
 MODEL="allenai/Olmo-3-1025-7B"
-DATA_UP="../../Data/olmo-3-7b/Data_up"
-DATA_UPSUB="../../Data/olmo-3-7b/Data_upsubword"
-VUP_PKL="../../Data/corpus_results.pkl"
-UPWORD_PKL="../../Data/corpus_results_upwords.pkl"
-CORPUS_STATS_PKL="../../Data/olmo_corpus_stats.pkl"
+DATA_UP="../Data/olmo-3-7b/Data_up"
+DATA_UPSUB="../Data/olmo-3-7b/Data_upsubword"
+VUP_PKL="../Data/corpus_results.pkl"
+UPWORD_PKL="../Data/corpus_results_upwords.pkl"
+CORPUS_STATS_PKL="../Data/olmo_corpus_stats.pkl"
 
 cd "$(dirname "$0")/.."   # cd into Analyses/
 

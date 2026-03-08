@@ -15,9 +15,9 @@
 
 set -euo pipefail
 
-VUP_PKL="../../Data/corpus_results.pkl"
-UPWORD_PKL="../../Data/corpus_results_upwords.pkl"
-CORPUS_STATS_PKL="../../Data/babylm_corpus_stats.pkl"
+VUP_PKL="../Data/corpus_results.pkl"
+UPWORD_PKL="../Data/corpus_results_upwords.pkl"
+CORPUS_STATS_PKL="../Data/babylm_corpus_stats.pkl"
 
 declare -A MODELS=(
   ["opt-125m"]="znhoughton/opt-babylm-125m-64eps-seed964"
@@ -36,8 +36,8 @@ cd "$(dirname "$0")/.."   # cd into Analyses/
 
 for TAG in "${TAGS[@]}"; do
   MODEL="${MODELS[$TAG]}"
-  DATA_UP="../../Data/babylm/$TAG/Data_up"
-  DATA_UPSUB="../../Data/babylm/$TAG/Data_upsubword"
+  DATA_UP="../Data/babylm/$TAG/Data_up"
+  DATA_UPSUB="../Data/babylm/$TAG/Data_upsubword"
 
   echo "========================================"
   echo " BabyLM $TAG  ($MODEL)"
