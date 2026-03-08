@@ -1,5 +1,5 @@
 """
-V+up Layer-by-Layer Analysis — "up morpheme" classifier
+V+up Layer-by-Layer Analysis — "up subword" classifier
 =========================================================
 Trains a logistic regression classifier layer-by-layer on a transformer
 model's hidden states to distinguish the "up" morpheme (standalone particle
@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Layer-by-layer up-morpheme classifier (standalone + subword)."
+        description="Layer-by-layer up-subword classifier (standalone + subword)."
     )
     parser.add_argument(
         "--model",
@@ -418,7 +418,7 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
         cmap="RdYlGn", alpha=0.7, edgecolors="grey", linewidths=0.3, s=60,
     )
     cbar = fig.colorbar(sc, ax=ax)
-    cbar.set_label("Mean P(up-morpheme-like)", fontsize=10)
+    cbar.set_label("Mean P(up-subword-like)", fontsize=10)
 
     poly_deg = 2
     coeffs   = np.polyfit(log_freq, logits, poly_deg)
@@ -439,7 +439,7 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
                label="Decision boundary (logit=0)")
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(10**x):,}"))
     ax.set_xlabel("Corpus frequency (log scale)", fontsize=11)
-    ax.set_ylabel("Mean logit (higher = more up-morpheme-like)", fontsize=11)
+    ax.set_ylabel("Mean logit (higher = more up-subword-like)", fontsize=11)
     ax.set_title(f"V+up compositionality — Layer {layer_idx}\n(upword classifier)", fontsize=12)
     ax.legend(fontsize=9)
 

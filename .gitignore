@@ -2,7 +2,4 @@
 .Rhistory
 .RData
 .Ruserdata
-<<<<<<< HEAD
-=======
-"large-file-pattern" 
->>>>>>> e0e46d5e30fa2573cd2693bc79578d33f1f70372
+model_cache/

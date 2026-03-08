@@ -4,7 +4,7 @@
 # Runs the full classifier pipeline for OLMo-3 7B:
 #   Step 1: build train/val/test CSVs (tokenizer-specific)
 #   Step 2: layer-by-layer standalone-up classifier
-#   Step 3: layer-by-layer up-morpheme classifier
+#   Step 3: layer-by-layer up-subword classifier
 #
 # Run from the Analyses/olmo-3-7b/ directory:
 #   bash run_pipeline.sh
@@ -42,7 +42,7 @@ python up_independently.py \
   --vup-pkl  "$VUP_PKL"
 
 echo ""
-echo "--- Step 3: up-morpheme classifier ---"
+echo "--- Step 3: up-subword classifier ---"
 python subwords_containing_up.py \
   --model    "$MODEL"    \
   --data-dir "$DATA_UPSUB" \

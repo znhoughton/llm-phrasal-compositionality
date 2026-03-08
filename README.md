@@ -11,6 +11,11 @@ transparent types should look more like it. Analyses examine how this signal
 varies as a function of corpus frequency and Forward Transitional Probability
 (FTP = P(up|V)) across layers.
 
+**Classifier design**: A separate logistic regression classifier is trained at
+each layer independently. The classifier trained at layer *L* is then applied to
+V+up test embeddings extracted from that same layer *L*. No classifier trained on
+one layer is ever applied to another layer's embeddings.
+
 ---
 
 ## Repository structure
@@ -21,21 +26,19 @@ llm-phrasal-compositionality/
 │   ├── create_dataset.py              # Mine C4 for V+up sentences → .pkl files
 │   ├── create_train_val_test.py       # Tokenize + build train/val/test CSVs
 │   ├── up_independently.py            # Layer-by-layer classifier (standalone up)
-│   ├── subwords_containing_up.py      # Layer-by-layer classifier (up morpheme)
+│   ├── subwords_containing_up.py      # Layer-by-layer classifier (up subword)
 │   ├── get_olmo_corpus_stats.py       # Compute verb frequencies + FTP from C4
 │   ├── get_babylm_corpus_stats.py     # Compute verb frequencies + FTP from BabyLM corpus
 │   ├── check_whisper_corpus.py        # Check speech corpus data sufficiency
+│   ├── analysis-script.Rmd            # Unified R analysis (params: source = "olmo"|"babylm"|"whisper")
 │   ├── olmo-3-7b/
-│   │   ├── run_pipeline.sh            # Run full OLMo-3 7B Python pipeline
-│   │   └── analysis-script.Rmd       # R analysis for OLMo-3 7B results
+│   │   └── run_pipeline.sh            # Run full OLMo-3 7B Python pipeline
 │   ├── babylm/
-│   │   ├── run_pipeline.sh            # Run full BabyLM Python pipeline
-│   │   └── analysis-script.Rmd       # R analysis comparing all three BabyLM OPT models
+│   │   └── run_pipeline.sh            # Run full BabyLM Python pipeline
 │   └── whisper/
 │       ├── build_whisper_dataset.py   # LibriSpeech → WhisperX alignment → dataset.csv
 │       ├── run_whisper_classifier.py  # Layer-by-layer encoder+decoder classifier
-│       ├── run_pipeline.sh            # Run full Whisper pipeline
-│       └── analysis-script.Rmd       # R analysis: encoder vs decoder compositionality
+│       └── run_pipeline.sh            # Run full Whisper pipeline
 ├── Data/
 │   ├── corpus_results.pkl             # V+up + standalone-up sentences (from C4)
 │   ├── corpus_results_upwords.pkl     # up-within-word sentences (from C4)
@@ -43,7 +46,7 @@ llm-phrasal-compositionality/
 │   ├── babylm_corpus_stats.pkl        # BabyLM verb frequencies + FTP (from BabyLM corpus)
 │   ├── olmo-3-7b/
 │   │   ├── Data_up/                   # OLMo results: standalone-up classifier
-│   │   └── Data_upsubword/            # OLMo results: up-morpheme classifier
+│   │   └── Data_upsubword/            # OLMo results: up-subword classifier
 │   ├── babylm/
 │   │   ├── opt-125m/{Data_up,Data_upsubword}/
 │   │   ├── opt-350m/{Data_up,Data_upsubword}/
@@ -53,6 +56,10 @@ llm-phrasal-compositionality/
 │       ├── audio/<utt_id>.wav         # 16kHz utterance audio clips
 │       ├── encoder/                   # layer_XX.csv, all_layers_results.csv, layer_metadata.json
 │       └── decoder/                   # same structure as encoder/
+├── model_cache/                       # Cached brms/bam .rds files — gitignored
+│   ├── olmo/
+│   ├── babylm/
+│   └── whisper/
 └── README.md
 ```
 
@@ -113,16 +120,24 @@ This runs three steps in sequence:
    `Data/olmo-3-7b/Data_upsubword/`
 2. `up_independently.py` — layer-by-layer standalone-up classifier; writes
    `layer_XX.csv`, `layer_XX_plot.png`, `all_layers_results.csv` to `Data_up/`
-3. `subwords_containing_up.py` — layer-by-layer up-morpheme classifier; same
+3. `subwords_containing_up.py` — layer-by-layer up-subword classifier; same
    outputs to `Data_upsubword/`
+
+At each layer, a fresh logistic regression classifier is trained on train-set
+hidden states from that layer, validated on val-set hidden states from that
+layer, and then evaluated on V+up test-set hidden states from that same layer.
 
 ### Step 6 — R analysis
 
-Open `Analyses/olmo-3-7b/analysis-script.Rmd` in RStudio and knit (or run
-chunk by chunk). Fitted model objects are cached as `.rds` files alongside the
-Rmd so re-runs skip refitting.
+```r
+rmarkdown::render("Analyses/analysis-script.Rmd", params = list(source = "olmo"))
+```
 
-The Rmd covers:
+Or open `Analyses/analysis-script.Rmd` in RStudio, set `params: source: "olmo"`
+in the YAML header, and knit. Fitted model objects are cached in `model_cache/olmo/`
+(gitignored) so re-runs skip refitting.
+
+The analysis covers:
 - Effect of **frequency** on logit at first/final layer (brms linear + bam non-linear)
 - Effect of **FTP** (predictability) on logit at first/final layer
 - **Joint** frequency + FTP effects
@@ -163,11 +178,13 @@ Each model runs the same three steps as the OLMo pipeline, writing results to
 
 ### Step 5 — R analysis
 
-Open `Analyses/babylm/analysis-script.Rmd` in RStudio and knit. All three
-models are loaded and compared in a single document. Layers are normalized to
-[0, 1] to allow cross-model comparison (OPT-125m has 12 layers; 350m and 1.3b
-have 24). The Rmd covers the same analyses as the OLMo Rmd, with `model` as an
-additional factor throughout.
+```r
+rmarkdown::render("Analyses/analysis-script.Rmd", params = list(source = "babylm"))
+```
+
+All three models are loaded and compared in a single document. Layers are
+normalized to [0, 1] to allow cross-model comparison (OPT-125m has 12 layers;
+350m and 1.3b have 24). Fitted models are cached in `model_cache/babylm/`.
 
 ---
 
@@ -214,13 +231,42 @@ python subwords_containing_up.py \
 
 ---
 
----
-
 ## Full pipeline — Whisper-small (speech)
 
 Probes Whisper-small's **encoder** (audio) and **decoder** (text) representations
 using LibriSpeech as the speech corpus. Requires WhisperX for forced word-level
 alignment. Best run on a GPU machine.
+
+### Embedding extraction
+
+Hidden-state embeddings for "up" are extracted as follows:
+
+- **Encoder**: Whisper's encoder operates on 80-dim log-mel spectrograms with
+  a CNN frontend that outputs one frame every 20 ms. For each utterance, all
+  encoder and decoder hidden states are obtained in a **single forward pass**.
+  The "up" embedding at a given encoder layer is the **mean-pool of hidden-state
+  vectors over the frames spanning the word's time window**, as determined by
+  WhisperX forced word-level alignment (i.e. all 20 ms frames from `up_start`
+  to `up_end` are averaged).
+- **Decoder**: The gold transcript is fed to the decoder as teacher-forced input.
+  The "up" embedding at a given decoder layer is the **hidden state at the exact
+  token position** of "up" in the tokenized transcript.
+
+### Classifier design
+
+A separate logistic regression classifier is trained at each layer independently:
+- **Train**: standalone "up" embeddings (positive) vs. random other-word
+  embeddings from the same utterances (negative), sampled from LibriSpeech.
+- **Test**: V+up phrasal verb embeddings from qualifying types (≥5 occurrences).
+  The `frequency` column in output CSVs uses C4 corpus counts (passed via
+  `--vup-pkl`) rather than LibriSpeech occurrence counts, which better reflects
+  Whisper's training distribution.
+
+For **efficiency**, embeddings at all layers are extracted in a **single Whisper
+forward pass per utterance** (not one pass per layer). The per-layer training
+loop then slices the pre-computed embeddings and fits a fresh classifier at each
+layer. This is why the log output shows one embedding-extraction progress bar
+(covering all utterances) followed by a separate per-layer training loop.
 
 ### Step 0 — Check data sufficiency *(optional)*
 
@@ -259,25 +305,33 @@ coverage is insufficient.
 
 Extracts hidden states from all 12 encoder and 12 decoder layers in a single
 Whisper forward pass per utterance, trains a logistic regression classifier at
-each layer, and evaluates on V+up test types.
+each layer independently, and evaluates on V+up test types.
 
 ```bash
-python run_whisper_classifier.py   # uses ../../Data/whisper/ by default
+cd Analyses/whisper/
+bash run_pipeline.sh train.360   # recommended
+bash run_pipeline.sh             # defaults to train.clean.100 (insufficient standalone-up coverage)
+```
+
+Or run the classifier directly:
+
+```bash
+python run_whisper_classifier.py \
+  --vup-pkl ../../Data/corpus_results.pkl   # uses C4 frequencies for the frequency column
 # → ../../Data/whisper/encoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
 # → ../../Data/whisper/decoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
 ```
 
-Or run both steps with the pipeline script:
-
-```bash
-bash run_pipeline.sh                   # uses train.clean.100
-bash run_pipeline.sh train.clean.360   # more coverage
-```
+> Requires `Data/corpus_results.pkl` (produced by `create_dataset.py` in the OLMo pipeline).
 
 ### Step 3 — R analysis
 
-Open `Analyses/whisper/analysis-script.Rmd` in RStudio and knit. Compares
-encoder vs. decoder representations across all 12 layers. Covers:
+```r
+rmarkdown::render("Analyses/analysis-script.Rmd", params = list(source = "whisper"))
+```
+
+Compares encoder vs. decoder representations across all 12 layers. Fitted models
+are cached in `model_cache/whisper/`. Covers:
 - Effect of frequency on logit at first/final layer (brms + bam)
 - Non-linear frequency effect across layers (`te(log_freq, layer, by=component)`)
 - Validation accuracy per layer per component
@@ -299,4 +353,4 @@ python -m spacy download en_core_web_sm
 pip install whisperx soundfile
 ```
 
-R packages: `tidyverse`, `brms`, `mgcv`, `tidybayes`, `patchwork`, `viridis`, `plotly`
+R packages: `tidyverse`, `brms`, `mgcv`, `tidybayes`, `patchwork`, `viridis`, `plotly`, `jsonlite`

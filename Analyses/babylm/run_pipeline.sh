@@ -5,7 +5,7 @@
 # sequentially:
 #   Step 1: build train/val/test CSVs (tokenizer-specific, per model)
 #   Step 2: layer-by-layer standalone-up classifier (per model)
-#   Step 3: layer-by-layer up-morpheme classifier (per model)
+#   Step 3: layer-by-layer up-subword classifier (per model)
 #
 # Run from the Analyses/babylm/ directory:
 #   bash run_pipeline.sh
@@ -61,7 +61,7 @@ for TAG in "${TAGS[@]}"; do
     --vup-pkl  "$VUP_PKL"
 
   echo ""
-  echo "--- Step 3: up-morpheme classifier ---"
+  echo "--- Step 3: up-subword classifier ---"
   python subwords_containing_up.py \
     --model    "$MODEL"    \
     --data-dir "$DATA_UPSUB" \

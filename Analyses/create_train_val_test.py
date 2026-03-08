@@ -23,7 +23,7 @@ Columns in train.csv and val.csv:
                         e.g. "cup"   -> token containing "up" subword (label=1)
                         e.g. "the"   -> random other token (label=0)
     sentence        -- source sentence
-    label           -- 1 = "up" morpheme, 0 = other token
+    label           -- 1 = "up" subword, 0 = other token
     source          -- "standalone_up" | "up_within_word" |
                        "other_token_from_up" | "other_token_from_upword"
     token_position  -- BPE token index in the truncated sequence
