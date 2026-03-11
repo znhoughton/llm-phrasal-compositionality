@@ -12,10 +12,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.116,
-      "cv_std": 0.012104,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -25,10 +25,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.1095,
-      "cv_std": 0.006205,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -38,10 +38,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.113,
-      "cv_std": 0.002915,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -51,10 +51,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.1115,
-      "cv_std": 0.010559,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -64,10 +64,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.108,
-      "cv_std": 0.01382,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -77,10 +77,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.0975,
-      "cv_std": 0.007071,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -90,10 +90,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.0985,
-      "cv_std": 0.010794,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -103,10 +103,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.0995,
-      "cv_std": 0.004583,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -116,10 +116,10 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.0985,
-      "cv_std": 0.009028,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
+      "cv_mean": 0.998,
+      "cv_std": 0.002449,
+      "val_acc": 1.0,
+      "val_up_acc": 1.0,
       "val_other_acc": 1.0
     },
     {
@@ -129,11 +129,11 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.1025,
-      "cv_std": 0.006708,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
-      "val_other_acc": 1.0
+      "cv_mean": 0.997,
+      "cv_std": 0.002449,
+      "val_acc": 0.9975,
+      "val_up_acc": 1.0,
+      "val_other_acc": 0.995
     },
     {
       "layer": 10,
@@ -142,11 +142,11 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.1035,
-      "cv_std": 0.009566,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
-      "val_other_acc": 1.0
+      "cv_mean": 0.9955,
+      "cv_std": 0.004583,
+      "val_acc": 0.9925,
+      "val_up_acc": 0.995,
+      "val_other_acc": 0.99
     },
     {
       "layer": 11,
@@ -155,11 +155,11 @@
       "train_n_negative": 1000,
       "val_n_positive": 200,
       "val_n_negative": 200,
-      "cv_mean": 0.1005,
-      "cv_std": 0.00886,
-      "val_acc": 0.5,
-      "val_up_acc": 0.0,
-      "val_other_acc": 1.0
+      "cv_mean": 0.9935,
+      "cv_std": 0.006042,
+      "val_acc": 0.9975,
+      "val_up_acc": 1.0,
+      "val_other_acc": 0.995
     }
   ]
 }
