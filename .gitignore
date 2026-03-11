@@ -3,3 +3,5 @@
 .RData
 .Ruserdata
 model_cache/
+c4_10B_2B_local/
+hf_cache/

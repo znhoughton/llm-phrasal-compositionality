@@ -171,12 +171,16 @@ def build_splits(df):
 # EMBEDDING EXTRACTION — single forward pass per utterance, all layers
 # ---------------------------------------------------------------------------
 
-def find_up_token_ids(processor):
-    """Return set of token ids that correspond to variants of 'up'."""
-    up_ids = set()
-    for candidate in [" up", "up", " Up", "Up", " UP", "UP"]:
-        up_ids.update(processor.tokenizer.encode(candidate, add_special_tokens=False))
-    return up_ids
+def find_word_token_ids(processor, word):
+    """Return set of token ids for common surface forms of word."""
+    word = word.strip(".,!?;:\"'").strip()
+    if not word:
+        return set()
+    ids = set()
+    for candidate in [f" {word}", word, f" {word.capitalize()}", word.capitalize(),
+                      f" {word.upper()}", word.upper()]:
+        ids.update(processor.tokenizer.encode(candidate, add_special_tokens=False))
+    return ids
 
 
 def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
@@ -192,7 +196,8 @@ def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
     enc  = [[] for _ in range(n_enc)]
     dec  = [[] for _ in range(n_dec)]
     targets = []
-    up_ids  = find_up_token_ids(processor)
+    up_ids           = find_word_token_ids(processor, "up")
+    neg_word_id_cache = {}   # word string -> set of token ids
 
     for _, row in tqdm(df.iterrows(), total=len(df), desc=desc, unit="utt"):
         try:
@@ -229,18 +234,31 @@ def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
                 emb = h[0, sf_:ef, :].mean(dim=0).float().cpu().numpy()
                 enc[li].append(emb)
 
-            # ---- Decoder: hidden state at the "up" token position ----
-            tokens = decoder_input_ids[0].tolist()
-            up_positions = [j for j, t in enumerate(tokens) if t in up_ids]
+            # ---- Decoder: hidden state at the target token position ----
+            # Positives (target=1): find the "up" token.
+            # Negatives (target=0): find the neg_word token so the classifier
+            #   sees genuinely different embeddings for the two classes.
+            tokens     = decoder_input_ids[0].tolist()
+            target_val = int(row["target"]) if "target" in row else 1
 
-            if not up_positions:
+            if target_val == 1:
+                target_ids = up_ids
+            else:
+                nw = str(row.get("neg_word", "")).strip()
+                if nw not in neg_word_id_cache:
+                    neg_word_id_cache[nw] = find_word_token_ids(processor, nw)
+                target_ids = neg_word_id_cache[nw]
+
+            target_positions = [j for j, t in enumerate(tokens) if t in target_ids]
+
+            if not target_positions:
                 for li in range(n_dec):
                     dec[li].append(None)
             else:
-                up_pos = up_positions[0]
+                dec_pos = target_positions[0]
                 for li in range(n_dec):
                     h = outputs.decoder_hidden_states[li + 1]   # (1, S, d)
-                    emb = h[0, up_pos, :].float().cpu().numpy()
+                    emb = h[0, dec_pos, :].float().cpu().numpy()
                     dec[li].append(emb)
 
             targets.append(int(row["target"]) if "target" in row else 1)

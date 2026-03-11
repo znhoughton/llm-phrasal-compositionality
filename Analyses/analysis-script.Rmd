@@ -3,8 +3,6 @@ title: "Unified Analysis — LLM Phrasal Compositionality"
 author: "Zachary Houghton"
 date: "`r Sys.Date()`"
 output: html_document
-params:
-  source: "olmo"   # "olmo" | "babylm" | "whisper"
 ---
 
 ```{r setup, include=FALSE}
@@ -24,235 +22,315 @@ library(jsonlite)
 
 # Configuration
 
-Set `params$source` to `"olmo"`, `"babylm"`, or `"whisper"` in the YAML header
-(or via `rmarkdown::render(..., params = list(source = "babylm"))`).
+This document produces results for all three model families (OLMo, BabyLM, Whisper) in a single knit.
 
-Fitted model objects (brms and bam) are cached in `../model_cache/{source}/`
-which is gitignored so large files are not uploaded to GitHub.
+Fitted model objects (brms and bam) are cached in `../model_cache/{family}/` which is gitignored so large files are not uploaded to GitHub.
 
 ```{r config}
-SOURCE    = params$source
-CACHE_DIR = file.path("../model_cache", SOURCE)
-dir.create(CACHE_DIR, recursive = TRUE, showWarnings = FALSE)
+OLMO_CACHE_DIR   = "../model_cache/olmo"
+BLM_CACHE_DIR    = "../model_cache/babylm"
+WH_CACHE_DIR     = "../model_cache/whisper"
 
-has_ftp         = SOURCE %in% c("olmo", "babylm")
-has_component   = SOURCE == "whisper"
-has_multi_model = SOURCE == "babylm"
+dir.create(OLMO_CACHE_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(BLM_CACHE_DIR,  recursive = TRUE, showWarnings = FALSE)
+dir.create(WH_CACHE_DIR,   recursive = TRUE, showWarnings = FALSE)
 
 priors = c(prior(normal(0, 1), class = 'b'))
 
-# Helper: full path for bam .rds cache files
-rds_path = function(name) file.path(CACHE_DIR, paste0(name, ".rds"))
+# OLMo cache helpers
+olmo_rds_path  = function(name) file.path(OLMO_CACHE_DIR, paste0(name, ".rds"))
+olmo_brms_path = function(name) file.path(OLMO_CACHE_DIR, name)
+olmo_cache_bam = function(name, expr_fn) {
+  p = olmo_rds_path(name)
+  if (file.exists(p)) readRDS(p) else { m = expr_fn(); saveRDS(m, p); m }
+}
 
-# Helper: full path prefix for brms file= argument (brms appends .rds itself)
-brms_path = function(name) file.path(CACHE_DIR, name)
+# BabyLM cache helpers
+blm_rds_path  = function(name) file.path(BLM_CACHE_DIR, paste0(name, ".rds"))
+blm_brms_path = function(name) file.path(BLM_CACHE_DIR, name)
+blm_cache_bam = function(name, expr_fn) {
+  p = blm_rds_path(name)
+  if (file.exists(p)) readRDS(p) else { m = expr_fn(); saveRDS(m, p); m }
+}
 
-# Helper: load bam from cache or fit and save
-cache_bam = function(name, expr_fn) {
-  p = rds_path(name)
+# Whisper cache helpers
+wh_rds_path  = function(name) file.path(WH_CACHE_DIR, paste0(name, ".rds"))
+wh_brms_path = function(name) file.path(WH_CACHE_DIR, name)
+wh_cache_bam = function(name, expr_fn) {
+  p = wh_rds_path(name)
   if (file.exists(p)) readRDS(p) else { m = expr_fn(); saveRDS(m, p); m }
 }
 ```
 
----
 
 # Data loading
 
-```{r load-olmo, eval = params$source == "olmo"}
-up_independently = read_csv('../Data/olmo-3-7b/Data_up/all_layers_results.csv') %>%
-  mutate(log_freq = log(frequency), log_ftp = log(ftp), verb_up = factor(verb_up))
+```{r load-olmo}
+olmo_indep = read_csv('../Data/olmo-3-7b/Data_up/all_layers_results.csv') %>%
+  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+  filter(!is.na(ftp), is.finite(log_ftp))
 
-up_subword = read_csv('../Data/olmo-3-7b/Data_upsubword/all_layers_results.csv') %>%
-  mutate(log_freq = log(frequency), log_ftp = log(ftp), verb_up = factor(verb_up))
+olmo_sub = read_csv('../Data/olmo-3-7b/Data_upsubword/all_layers_results.csv') %>%
+  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+  filter(!is.na(ftp), is.finite(log_ftp))
 
-FINAL_LAYER = 31
-N_LAYERS    = 32
+OLMO_FINAL_LAYER = 31
+OLMO_N_LAYERS    = 32
 
-up_indep_final = up_independently %>% filter(layer == FINAL_LAYER)
-up_sub_final   = up_subword       %>% filter(layer == FINAL_LAYER)
-up_indep_first = up_independently %>% filter(layer == 0)
-up_sub_first   = up_subword       %>% filter(layer == 0)
+olmo_indep_final = olmo_indep %>% filter(layer == OLMO_FINAL_LAYER)
+olmo_sub_final   = olmo_sub   %>% filter(layer == OLMO_FINAL_LAYER)
+olmo_indep_first = olmo_indep %>% filter(layer == 0)
+olmo_sub_first   = olmo_sub   %>% filter(layer == 0)
 ```
 
-```{r load-babylm, eval = params$source == "babylm"}
-FINAL_LAYER_MAP = list("opt-125m" = 11L, "opt-350m" = 23L, "opt-1.3b" = 23L)
+```{r load-babylm}
+BLM_FINAL_LAYER_MAP = list("opt-125m" = 11L, "opt-350m" = 23L, "opt-1.3b" = 23L)
 
 load_babylm_model = function(tag) {
   ui = read_csv(paste0('../Data/babylm/', tag, '/Data_up/all_layers_results.csv')) %>%
-    mutate(model = tag, log_freq = log(frequency), log_ftp = log(ftp), verb_up = factor(verb_up))
+    mutate(model = tag, log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+    filter(!is.na(ftp), is.finite(log_ftp))
   us = read_csv(paste0('../Data/babylm/', tag, '/Data_upsubword/all_layers_results.csv')) %>%
-    mutate(model = tag, log_freq = log(frequency), log_ftp = log(ftp), verb_up = factor(verb_up))
+    mutate(model = tag, log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+    filter(!is.na(ftp), is.finite(log_ftp))
   list(ui = ui, us = us)
 }
 
-raw = lapply(c("opt-125m", "opt-350m", "opt-1.3b"), load_babylm_model)
-names(raw) = c("opt-125m", "opt-350m", "opt-1.3b")
+blm_raw = lapply(c("opt-125m", "opt-350m", "opt-1.3b"), load_babylm_model)
+names(blm_raw) = c("opt-125m", "opt-350m", "opt-1.3b")
 
-up_independently = map_dfr(raw, "ui") %>%
+blm_indep = map_dfr(blm_raw, "ui") %>%
   mutate(model = factor(model, levels = c("opt-125m", "opt-350m", "opt-1.3b"))) %>%
   group_by(model) %>% mutate(layer_norm = layer / max(layer)) %>% ungroup()
 
-up_subword = map_dfr(raw, "us") %>%
+blm_sub = map_dfr(blm_raw, "us") %>%
   mutate(model = factor(model, levels = c("opt-125m", "opt-350m", "opt-1.3b"))) %>%
   group_by(model) %>% mutate(layer_norm = layer / max(layer)) %>% ungroup()
 
-up_indep_final = up_independently %>%
+blm_indep_final = blm_indep %>%
   group_by(model) %>%
-  filter(layer == FINAL_LAYER_MAP[[as.character(model[1])]]) %>% ungroup()
+  filter(layer == BLM_FINAL_LAYER_MAP[[as.character(model[1])]]) %>% ungroup()
 
-up_sub_final = up_subword %>%
+blm_sub_final = blm_sub %>%
   group_by(model) %>%
-  filter(layer == FINAL_LAYER_MAP[[as.character(model[1])]]) %>% ungroup()
+  filter(layer == BLM_FINAL_LAYER_MAP[[as.character(model[1])]]) %>% ungroup()
 
-up_indep_first = up_independently %>% filter(layer == 0)
-up_sub_first   = up_subword       %>% filter(layer == 0)
+blm_indep_first = blm_indep %>% filter(layer == 0)
+blm_sub_first   = blm_sub   %>% filter(layer == 0)
 ```
 
-```{r load-whisper, eval = params$source == "whisper"}
-encoder = read_csv('../Data/whisper/encoder/all_layers_results.csv') %>%
-  mutate(component = "encoder", log_freq = log(frequency), verb_up = factor(verb_up))
+```{r load-whisper}
+# FTP values come from C4 via the shared ftp_lookup.csv (same source as OLMo)
+ftp_lookup = read_csv('../Data/ftp_lookup.csv')  # columns: verb_up, ftp
 
-decoder = read_csv('../Data/whisper/decoder/all_layers_results.csv') %>%
-  mutate(component = "decoder", log_freq = log(frequency), verb_up = factor(verb_up))
+load_whisper_component = function(path, comp) {
+  read_csv(path) %>%
+    select(-any_of("ftp")) %>%          # drop any pre-existing ftp column
+    mutate(component = comp, log_freq = log(frequency),
+           verb_up_chr = as.character(verb_up)) %>%
+    left_join(ftp_lookup, by = c("verb_up_chr" = "verb_up")) %>%
+    filter(!is.na(ftp)) %>%
+    mutate(log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up_chr)) %>%
+    filter(is.finite(log_ftp)) %>%
+    select(-verb_up_chr)
+}
+
+encoder = load_whisper_component('../Data/whisper/encoder/all_layers_results.csv', "encoder")
+decoder = load_whisper_component('../Data/whisper/decoder/all_layers_results.csv', "decoder")
 
 whisper_all = bind_rows(encoder, decoder) %>%
   mutate(component = factor(component, levels = c("encoder", "decoder")))
 
-FINAL_LAYER   = 11
-N_LAYERS      = 12
+WH_FINAL_LAYER = 11
+WH_N_LAYERS    = 12
 
-whisper_final = whisper_all %>% filter(layer == FINAL_LAYER)
+whisper_final = whisper_all %>% filter(layer == WH_FINAL_LAYER)
 whisper_first = whisper_all %>% filter(layer == 0)
-enc_final     = encoder     %>% filter(layer == FINAL_LAYER)
-dec_final     = decoder     %>% filter(layer == FINAL_LAYER)
 ```
 
----
+------------------------------------------------------------------------
+
+# Predictor Definitions
+
+## Frequency
+
+Corpus frequency is the raw count of each V+up type (e.g. *pick up*, *set up*) in the training corpus of each model. Because frequency distributions are highly right-skewed — a small number of very common types account for the vast majority of tokens — we log-transform before entering it as a predictor:
+
+$$\text{log-frequency} = \log\bigl(\text{count}(V\text{+up})\bigr)$$
+
+Log-frequency is used as a continuous predictor throughout all models.
+
+> **Corpus note.** OLMo and Whisper use C4 corpus statistics (frequency and FTP), since both models were trained on or evaluated against web text of that scale. BabyLM uses its own training corpus statistics (`babylm_corpus_stats.pkl`), since its models were trained on a qualitatively different, much smaller dataset (\~100M words). Using corpus-matched statistics for each model ensures that the predictors reflect the distributional environment the model actually learned from.
+
+## Predictability: Forward Transitional Probability and its log-odds
+
+**Step 1 — Define FTP.** The Forward Transitional Probability of a V+up type measures how strongly the verb *predicts* the following particle. Formally, it is the conditional probability of "up" given the verb:
+
+$$\text{FTP}(V\text{+up}) = P(\text{"up"} \mid V) = \frac{\text{count}(V\text{+up})}{\text{count}(V)}$$
+
+where count$(V)$ is the total corpus frequency of the verb in any context. A high FTP (e.g. *end up*: FTP ≈ 0.09) means "up" is a relatively likely continuation of that verb; a low FTP means the verb occurs in many contexts and "up" is just one of them.
+
+**Step 2 — Convert to odds.** FTP is a probability bounded in $[0, 1]$, which makes it poorly suited for use as a linear predictor. We first convert to odds — the ratio of "up follows V" to "up does not follow V":
+
+$$\text{odds}(V\text{+up}) = \frac{P(\text{"up"} \mid V)}{1 - P(\text{"up"} \mid V)} = \frac{\text{FTP}}{1 - \text{FTP}}$$
+
+Substituting the count-based definition of FTP into both numerator and denominator:
+
+$$= \frac{\dfrac{\text{count}(V\text{+up})}{\text{count}(V)}}{\ 1 - \dfrac{\text{count}(V\text{+up})}{\text{count}(V)}\ } = \frac{\dfrac{\text{count}(V\text{+up})}{\text{count}(V)}}{\dfrac{\text{count}(V) - \text{count}(V\text{+up})}{\text{count}(V)}}$$
+
+The count$(V)$ terms cancel:
+
+$$= \frac{\text{count}(V\text{+up})}{\text{count}(V) - \text{count}(V\text{+up})}$$
+
+This is the ratio of *V+up* occurrences to occurrences of V that are *not* followed by "up" — a natural measure of how much "up" dominates the verb's distributional context.
+
+**Step 3 — Take the log.** Taking the logarithm converts the odds to a symmetric, unbounded scale suitable for linear modelling:
+
+$$\text{log-odds}(V\text{+up}) = \log\!\left(\frac{\text{count}(V\text{+up})}{\text{count}(V) - \text{count}(V\text{+up})}\right)$$
+
+Because we derived this from FTP = count$(V\text{+up})$ / count$(V)$, this expression is algebraically identical to the logit of FTP:
+
+$$= \log\!\left(\frac{\text{FTP}}{1 - \text{FTP}}\right) = \operatorname{logit}(\text{FTP})$$
+
+In R this is computed as `log(ftp / (1 - ftp))` and used as the predictability predictor in all models.
+
+------------------------------------------------------------------------
+
+# Item Statistics
+
+All sources use C4 corpus frequency and FTP (from `ftp_lookup.csv`).
+
+## Build item tables
+
+```{r item-build-olmo}
+olmo_items = olmo_indep %>%
+  filter(layer == 0) %>%
+  group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp),
+            .groups = "drop")
+```
+
+```{r item-build-babylm}
+# Use opt-125m as the representative model for item-level statistics
+blm_items = blm_indep %>%
+  filter(layer == 0, model == "opt-125m") %>%
+  group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp),
+            .groups = "drop")
+```
+
+```{r item-build-whisper}
+whisper_items = whisper_all %>%
+  filter(layer == 0, component == "encoder") %>%
+  group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp),
+            .groups = "drop")
+```
+
+## Summary tables
+
+```{r item-stats}
+print_item_stats = function(items, label) {
+  cat(sprintf("Source: %s   N items: %d\n", label, nrow(items)))
+  cat(sprintf("Frequency  — min: %d  median: %d  max: %d\n",
+      min(items$frequency), as.integer(median(items$frequency)), max(items$frequency)))
+  cat(sprintf("FTP        — min: %.4f  median: %.4f  max: %.4f\n",
+      min(items$ftp), median(items$ftp), max(items$ftp)))
+  cat(sprintf("log(freq)  — min: %.2f  median: %.2f  max: %.2f\n",
+      min(items$log_freq), median(items$log_freq), max(items$log_freq)))
+  cat(sprintf("log-odds(FTP) — min: %.2f  median: %.2f  max: %.2f\n",
+      min(items$log_ftp), median(items$log_ftp), max(items$log_ftp)))
+  cat("\n")
+}
+
+print_item_stats(olmo_items,    "olmo")
+print_item_stats(blm_items,     "opt-125m (babylm)")
+print_item_stats(whisper_items, "whisper")
+```
+
+## Top / bottom 5 by frequency and predictability
+
+```{r item-extremes}
+print_extremes = function(items, label) {
+  cat(sprintf("=== %s: Top 5 most frequent ===\n", label))
+  print(items %>% arrange(desc(frequency)) %>% slice(1:5) %>%
+          select(verb_up, frequency, ftp) %>% as.data.frame())
+
+  cat(sprintf("\n=== %s: Top 5 least frequent ===\n", label))
+  print(items %>% arrange(frequency) %>% slice(1:5) %>%
+          select(verb_up, frequency, ftp) %>% as.data.frame())
+
+  cat(sprintf("\n=== %s: Top 5 most predictable (highest FTP) ===\n", label))
+  print(items %>% arrange(desc(ftp)) %>% slice(1:5) %>%
+          select(verb_up, frequency, ftp) %>% as.data.frame())
+
+  cat(sprintf("\n=== %s: Top 5 least predictable (lowest FTP) ===\n", label))
+  print(items %>% arrange(ftp) %>% slice(1:5) %>%
+          select(verb_up, frequency, ftp) %>% as.data.frame())
+  cat("\n")
+}
+
+print_extremes(olmo_items,    "OLMo")
+print_extremes(blm_items,     "BabyLM (opt-125m)")
+print_extremes(whisper_items, "Whisper")
+```
+
+## Item distribution plots
+
+```{r item-plots, fig.width = 10, fig.height = 8}
+plot_item_space = function(items, source_label) {
+  p_scatter = ggplot(items, aes(x = log_freq, y = log_ftp, label = verb_up)) +
+    geom_point(alpha = 0.5, size = 1.5, colour = "steelblue") +
+    geom_smooth(method = "lm", colour = "firebrick", linewidth = 0.8, se = TRUE) +
+    labs(x = "log(frequency)", y = "log-odds(FTP)",
+         title = "Item space: log frequency vs. log-odds(FTP)",
+         subtitle = sprintf("N = %d V+up types  |  source: %s", nrow(items), source_label)) +
+    theme_bw()
+
+  p_freq_hist = ggplot(items, aes(x = log_freq)) +
+    geom_histogram(bins = 40, fill = "steelblue", colour = "white", alpha = 0.8) +
+    labs(x = "log(frequency)", y = "Count", title = "Distribution of log frequency") +
+    theme_bw()
+
+  p_ftp_hist = ggplot(items, aes(x = log_ftp)) +
+    geom_histogram(bins = 40, fill = "darkorange", colour = "white", alpha = 0.8) +
+    labs(x = "log-odds(FTP)", y = "Count", title = "Distribution of log-odds(FTP)") +
+    theme_bw()
+
+  p_ftp_raw = ggplot(items, aes(x = ftp)) +
+    geom_histogram(bins = 40, fill = "darkorange", colour = "white", alpha = 0.8) +
+    labs(x = "FTP", y = "Count", title = "Distribution of raw FTP") +
+    theme_bw()
+
+  (p_scatter) / (p_freq_hist | p_ftp_hist | p_ftp_raw)
+}
+
+plot_item_space(olmo_items,    "olmo")
+plot_item_space(blm_items,     "babylm (opt-125m)")
+plot_item_space(whisper_items, "whisper")
+```
+
+------------------------------------------------------------------------
 
 # OLMo-3 7B Analysis
 
-`r if (params$source != "olmo") "*(Not running — set params$source = 'olmo')*"`
+## Plot helper functions (OLMo)
 
-## UP independently
-
-### Effect of frequency at the final layer (brms)
-```{r olmo-brms-freq-indep-final, eval = params$source == "olmo"}
-model_freq_up_independently = brm(
-  formula = logit ~ log_freq + (1 | verb_up),
-  data    = up_indep_final,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_independently")
-)
-summary(model_freq_up_independently)
-```
-
-### Effect of frequency at the first layer (brms)
-```{r olmo-brms-freq-indep-first, eval = params$source == "olmo"}
-model_freq_up_independently_first_layer = brm(
-  formula = logit ~ log_freq + (1 | verb_up),
-  data    = up_indep_first,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_independently_first_layer")
-)
-summary(model_freq_up_independently_first_layer)
-```
-
-### Effect of frequency at the final layer (bam — non-linear)
-```{r olmo-bam-freq-indep-final, eval = params$source == "olmo"}
-set.seed(964)
-bam_freq_up_independently_final = cache_bam("bam_freq_up_independently_final", function() {
-  bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
-      data = up_indep_final, method = 'fREML', discrete = TRUE)
-})
-summary(bam_freq_up_independently_final)
-```
-
-### Effect of frequency at the first layer (bam — non-linear)
-```{r olmo-bam-freq-indep-first, eval = params$source == "olmo"}
-set.seed(964)
-bam_freq_up_independently_first = cache_bam("bam_freq_up_independently_first", function() {
-  bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
-      data = up_indep_first, method = 'fREML', discrete = TRUE)
-})
-summary(bam_freq_up_independently_first)
-```
-
-### Effect of frequency interacting with layer (mgcv)
-```{r olmo-bam-freq-layer-indep, eval = params$source == "olmo"}
-set.seed(964)
-model_freq_layer_up_independently = cache_bam("model_freq_layer_up_independently", function() {
-  bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
-      data = up_independently, method = 'fREML', discrete = TRUE)
-})
-summary(model_freq_layer_up_independently)
-```
-
-## UP as a subword
-
-### Effect of frequency at the final layer (brms)
-```{r olmo-brms-freq-sub-final, eval = params$source == "olmo"}
-model_freq_up_subword = brm(
-  formula = logit ~ log_freq + (1 | verb_up),
-  data    = up_sub_final,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_subword")
-)
-summary(model_freq_up_subword)
-```
-
-### Effect of frequency at the first layer (brms)
-```{r olmo-brms-freq-sub-first, eval = params$source == "olmo"}
-model_freq_up_subword_first_layer = brm(
-  formula = logit ~ log_freq + (1 | verb_up),
-  data    = up_sub_first,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_subword_first_layer")
-)
-summary(model_freq_up_subword_first_layer)
-```
-
-### Effect of frequency at the final layer (bam — non-linear)
-```{r olmo-bam-freq-sub-final, eval = params$source == "olmo"}
-set.seed(964)
-bam_freq_up_subword_final = cache_bam("bam_freq_up_subword_final", function() {
-  bam(logit ~ s(log_freq, k = 10) + s(verb_up, bs = 're'),
-      data = up_sub_final, method = 'fREML', discrete = TRUE)
-})
-summary(bam_freq_up_subword_final)
-```
-
-### Effect of frequency at the first layer (bam — non-linear)
-```{r olmo-bam-freq-sub-first, eval = params$source == "olmo"}
-set.seed(964)
-bam_freq_up_subword_first = cache_bam("bam_freq_up_subword_first", function() {
-  bam(logit ~ s(log_freq, k = 10) + s(verb_up, bs = 're'),
-      data = up_sub_first, method = 'fREML', discrete = TRUE)
-})
-summary(bam_freq_up_subword_first)
-```
-
-### Effect of frequency interacting with layer (mgcv)
-```{r olmo-bam-freq-layer-sub, eval = params$source == "olmo"}
-set.seed(964)
-model_freq_layer_up_subword = cache_bam("model_freq_layer_up_subword", function() {
-  bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
-      data = up_subword, method = 'fREML', discrete = TRUE)
-})
-summary(model_freq_layer_up_subword)
-```
-
-## OLMo Plots
-
-### Plot helper functions
-```{r olmo-plot-helpers, eval = params$source == "olmo"}
+```{r olmo-plot-helpers}
 plot_final_layer = function(model, data, title) {
+  # Population-level predictions (random effects marginalized)
   log_freq_seq = seq(min(data$log_freq), max(data$log_freq), length.out = 100)
   newdata = data.frame(log_freq = log_freq_seq, verb_up = NA)
   epred = add_epred_draws(newdata, model, re_formula = NA, ndraws = 500)
+
+  # Per-verb_up mean logit (one point per type, averaging over sentences)
+  points_df = data %>%
+    group_by(verb_up, log_freq) %>%
+    summarise(mean_logit = mean(logit), .groups = "drop")
+
   epred %>%
     ggplot(aes(x = log_freq, y = .epred)) +
     stat_lineribbon(.width = c(0.95, 0.80, 0.50), alpha = 0.35) +
@@ -260,9 +338,11 @@ plot_final_layer = function(model, data, title) {
       values = c("0.95" = "#b3cde3", "0.80" = "#6497b1", "0.50" = "#005b96"),
       labels = c("95%", "80%", "50%")
     ) +
-    stat_summary(data = data, aes(x = log_freq, y = logit),
-                 fun = mean, geom = "point", color = "gray30", size = 1.5, alpha = 0.6) +
-    labs(title = title, x = "log(frequency)", y = "Predicted logit", fill = "Credible interval") +
+    geom_point(data = points_df, aes(x = log_freq, y = mean_logit),
+               color = "gray30", size = 1.5, alpha = 0.6, inherit.aes = FALSE) +
+    labs(title = title, x = "log(frequency)", y = "Predicted logit",
+         subtitle = "Line: population-level effect (random intercepts marginalized)",
+         fill = "Credible interval") +
     theme_minimal(base_size = 13) +
     theme(plot.title = element_text(size = 11, face = "bold", margin = margin(b = 8)),
           panel.grid.minor = element_blank(), legend.position = "bottom",
@@ -447,55 +527,183 @@ plot_joint_surface = function(model, data, title) {
 }
 ```
 
+## UP independently
+
+### Effect of frequency at the final layer (brms)
+
+```{r olmo-brms-freq-indep-final}
+olmo_model_freq_up_independently = brm(
+  formula = logit ~ log_freq + (1 | verb_up),
+  data    = olmo_indep_final,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_freq_up_independently")
+)
+summary(olmo_model_freq_up_independently)
+```
+
+### Effect of frequency at the first layer (brms)
+
+```{r olmo-brms-freq-indep-first}
+olmo_model_freq_up_independently_first_layer = brm(
+  formula = logit ~ log_freq + (1 | verb_up),
+  data    = olmo_indep_first,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_freq_up_independently_first_layer")
+)
+summary(olmo_model_freq_up_independently_first_layer)
+```
+
+### Effect of frequency at the final layer (bam — non-linear)
+
+```{r olmo-bam-freq-indep-final}
+set.seed(964)
+olmo_bam_freq_up_independently_final = olmo_cache_bam("bam_freq_up_independently_final", function() {
+  bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
+      data = olmo_indep_final, method = 'fREML', discrete = TRUE)
+})
+summary(olmo_bam_freq_up_independently_final)
+```
+
+### Effect of frequency at the first layer (bam — non-linear)
+
+```{r olmo-bam-freq-indep-first}
+set.seed(964)
+olmo_bam_freq_up_independently_first = olmo_cache_bam("bam_freq_up_independently_first", function() {
+  bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
+      data = olmo_indep_first, method = 'fREML', discrete = TRUE)
+})
+summary(olmo_bam_freq_up_independently_first)
+```
+
+### Effect of frequency interacting with layer (mgcv)
+
+```{r olmo-bam-freq-layer-indep}
+set.seed(964)
+olmo_model_freq_layer_up_independently = olmo_cache_bam("model_freq_layer_up_independently", function() {
+  bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+      data = olmo_indep, method = 'fREML', discrete = TRUE)
+})
+summary(olmo_model_freq_layer_up_independently)
+```
+
+## UP as a subword
+
+### Effect of frequency at the final layer (brms)
+
+```{r olmo-brms-freq-sub-final}
+olmo_model_freq_up_subword = brm(
+  formula = logit ~ log_freq + (1 | verb_up),
+  data    = olmo_sub_final,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_freq_up_subword")
+)
+summary(olmo_model_freq_up_subword)
+```
+
+### Effect of frequency at the first layer (brms)
+
+```{r olmo-brms-freq-sub-first}
+olmo_model_freq_up_subword_first_layer = brm(
+  formula = logit ~ log_freq + (1 | verb_up),
+  data    = olmo_sub_first,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_freq_up_subword_first_layer")
+)
+summary(olmo_model_freq_up_subword_first_layer)
+```
+
+### Effect of frequency at the final layer (bam — non-linear)
+
+```{r olmo-bam-freq-sub-final}
+set.seed(964)
+olmo_bam_freq_up_subword_final = olmo_cache_bam("bam_freq_up_subword_final", function() {
+  bam(logit ~ s(log_freq, k = 10) + s(verb_up, bs = 're'),
+      data = olmo_sub_final, method = 'fREML', discrete = TRUE)
+})
+summary(olmo_bam_freq_up_subword_final)
+```
+
+### Effect of frequency at the first layer (bam — non-linear)
+
+```{r olmo-bam-freq-sub-first}
+set.seed(964)
+olmo_bam_freq_up_subword_first = olmo_cache_bam("bam_freq_up_subword_first", function() {
+  bam(logit ~ s(log_freq, k = 10) + s(verb_up, bs = 're'),
+      data = olmo_sub_first, method = 'fREML', discrete = TRUE)
+})
+summary(olmo_bam_freq_up_subword_first)
+```
+
+### Effect of frequency interacting with layer (mgcv)
+
+```{r olmo-bam-freq-layer-sub}
+set.seed(964)
+olmo_model_freq_layer_up_subword = olmo_cache_bam("model_freq_layer_up_subword", function() {
+  bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+      data = olmo_sub, method = 'fREML', discrete = TRUE)
+})
+summary(olmo_model_freq_layer_up_subword)
+```
+
+## OLMo Plots
+
 ### Frequency at first/final layer — brms plots
-```{r olmo-plot-brms-freq, eval = params$source == "olmo"}
-p_indep_final = plot_final_layer(model_freq_up_independently,
-  up_indep_final, "UP independently: frequency effect at final layer (31)")
-p_sub_final   = plot_final_layer(model_freq_up_subword,
-  up_sub_final,   "UP as subword: frequency effect at final layer (31)")
-p_indep_first = plot_final_layer(model_freq_up_independently_first_layer,
-  up_indep_first, "UP independently: frequency effect at first layer (0)")
-p_sub_first   = plot_final_layer(model_freq_up_subword_first_layer,
-  up_sub_first,   "UP as subword: frequency effect at first layer (0)")
+
+```{r olmo-plot-brms-freq}
+p_indep_final = plot_final_layer(olmo_model_freq_up_independently,
+  olmo_indep_final, "UP independently: frequency effect at final layer (31)")
+p_sub_final   = plot_final_layer(olmo_model_freq_up_subword,
+  olmo_sub_final,   "UP as subword: frequency effect at final layer (31)")
+p_indep_first = plot_final_layer(olmo_model_freq_up_independently_first_layer,
+  olmo_indep_first, "UP independently: frequency effect at first layer (0)")
+p_sub_first   = plot_final_layer(olmo_model_freq_up_subword_first_layer,
+  olmo_sub_first,   "UP as subword: frequency effect at first layer (0)")
 (p_indep_first | p_sub_first) / (p_indep_final | p_sub_final)
 ```
 
 ### Frequency at first/final layer — bam plots
-```{r olmo-plot-bam-freq, eval = params$source == "olmo"}
-p_bam_indep_final = plot_bam_single_layer(bam_freq_up_independently_final,
-  up_indep_final, "UP independently: non-linear freq effect at final layer (31)")
-p_bam_sub_final   = plot_bam_single_layer(bam_freq_up_subword_final,
-  up_sub_final,   "UP as subword: non-linear freq effect at final layer (31)")
-p_bam_indep_first = plot_bam_single_layer(bam_freq_up_independently_first,
-  up_indep_first, "UP independently: non-linear freq effect at first layer (0)")
-p_bam_sub_first   = plot_bam_single_layer(bam_freq_up_subword_first,
-  up_sub_first,   "UP as subword: non-linear freq effect at first layer (0)")
+
+```{r olmo-plot-bam-freq}
+p_bam_indep_final = plot_bam_single_layer(olmo_bam_freq_up_independently_final,
+  olmo_indep_final, "UP independently: non-linear freq effect at final layer (31)")
+p_bam_sub_final   = plot_bam_single_layer(olmo_bam_freq_up_subword_final,
+  olmo_sub_final,   "UP as subword: non-linear freq effect at final layer (31)")
+p_bam_indep_first = plot_bam_single_layer(olmo_bam_freq_up_independently_first,
+  olmo_indep_first, "UP independently: non-linear freq effect at first layer (0)")
+p_bam_sub_first   = plot_bam_single_layer(olmo_bam_freq_up_subword_first,
+  olmo_sub_first,   "UP as subword: non-linear freq effect at first layer (0)")
 (p_bam_indep_first | p_bam_sub_first) / (p_bam_indep_final | p_bam_sub_final)
 ```
 
 ### brms vs bam comparison (linearity check)
-```{r olmo-plot-brms-vs-bam, eval = params$source == "olmo"}
-p_cmp_indep_final = plot_brms_vs_bam(model_freq_up_independently,
-  bam_freq_up_independently_final, up_indep_final,
+
+```{r olmo-plot-brms-vs-bam}
+p_cmp_indep_final = plot_brms_vs_bam(olmo_model_freq_up_independently,
+  olmo_bam_freq_up_independently_final, olmo_indep_final,
   "UP independently: linear vs non-linear at final layer (31)")
-p_cmp_sub_final = plot_brms_vs_bam(model_freq_up_subword,
-  bam_freq_up_subword_final, up_sub_final,
+p_cmp_sub_final = plot_brms_vs_bam(olmo_model_freq_up_subword,
+  olmo_bam_freq_up_subword_final, olmo_sub_final,
   "UP as subword: linear vs non-linear at final layer (31)")
-p_cmp_indep_first = plot_brms_vs_bam(model_freq_up_independently_first_layer,
-  bam_freq_up_independently_first, up_indep_first,
+p_cmp_indep_first = plot_brms_vs_bam(olmo_model_freq_up_independently_first_layer,
+  olmo_bam_freq_up_independently_first, olmo_indep_first,
   "UP independently: linear vs non-linear at first layer (0)")
-p_cmp_sub_first = plot_brms_vs_bam(model_freq_up_subword_first_layer,
-  bam_freq_up_subword_first, up_sub_first,
+p_cmp_sub_first = plot_brms_vs_bam(olmo_model_freq_up_subword_first_layer,
+  olmo_bam_freq_up_subword_first, olmo_sub_first,
   "UP as subword: linear vs non-linear at first layer (0)")
 (p_cmp_indep_first | p_cmp_sub_first) / (p_cmp_indep_final | p_cmp_sub_final)
 ```
 
 ### Frequency across all layers — plots
-```{r olmo-plot-freq-layers, eval = params$source == "olmo"}
-plots_indep   = plot_freq_by_layer_mgcv(model_freq_layer_up_independently,
-                                        up_independently, "UP independently", n_layers = 32)
-plots_subword = plot_freq_by_layer_mgcv(model_freq_layer_up_subword,
-                                        up_subword, "UP as subword", n_layers = 32)
+
+```{r olmo-plot-freq-layers}
+plots_indep   = plot_freq_by_layer_mgcv(olmo_model_freq_layer_up_independently,
+                                        olmo_indep, "UP independently", n_layers = 32)
+plots_subword = plot_freq_by_layer_mgcv(olmo_model_freq_layer_up_subword,
+                                        olmo_sub, "UP as subword", n_layers = 32)
 (plots_indep$spaghetti + plots_subword$spaghetti) /
 (plots_indep$heatmap   + plots_subword$heatmap)   /
 (plots_indep$diff      + plots_subword$diff)
@@ -503,589 +711,645 @@ plots_indep$surface3d
 plots_subword$surface3d
 ```
 
----
+------------------------------------------------------------------------
 
-## OLMo — Predictability (FTP = P(up|V))
+## OLMo — Predictability (FTP = P(up\|V))
 
 ### Effect of FTP at the final layer (brms)
-```{r olmo-brms-ftp-final, eval = params$source == "olmo"}
-up_indep_final_ftp  = up_independently %>% filter(layer == 31, !is.na(log_ftp))
-up_sub_final_ftp    = up_subword       %>% filter(layer == 31, !is.na(log_ftp))
 
-model_ftp_up_independently = brm(
+```{r olmo-brms-ftp-final}
+olmo_indep_final_ftp  = olmo_indep %>% filter(layer == 31, !is.na(log_ftp))
+olmo_sub_final_ftp    = olmo_sub   %>% filter(layer == 31, !is.na(log_ftp))
+
+olmo_model_ftp_up_independently = brm(
   formula = logit ~ log_ftp + (1 | verb_up),
-  data    = up_indep_final_ftp,
+  data    = olmo_indep_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_ftp_up_independently")
+  file    = olmo_brms_path("model_ftp_up_independently")
 )
 
-model_ftp_up_subword = brm(
+olmo_model_ftp_up_subword = brm(
   formula = logit ~ log_ftp + (1 | verb_up),
-  data    = up_sub_final_ftp,
+  data    = olmo_sub_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_ftp_up_subword")
+  file    = olmo_brms_path("model_ftp_up_subword")
 )
-summary(model_ftp_up_independently)
-summary(model_ftp_up_subword)
+summary(olmo_model_ftp_up_independently)
+summary(olmo_model_ftp_up_subword)
 ```
 
 ### Effect of FTP at the first layer (brms)
-```{r olmo-brms-ftp-first, eval = params$source == "olmo"}
-up_indep_first_ftp = up_independently %>% filter(layer == 0, !is.na(log_ftp))
-up_sub_first_ftp   = up_subword       %>% filter(layer == 0, !is.na(log_ftp))
 
-model_ftp_up_independently_first_layer = brm(
+```{r olmo-brms-ftp-first}
+olmo_indep_first_ftp = olmo_indep %>% filter(layer == 0, !is.na(log_ftp))
+olmo_sub_first_ftp   = olmo_sub   %>% filter(layer == 0, !is.na(log_ftp))
+
+olmo_model_ftp_up_independently_first_layer = brm(
   formula = logit ~ log_ftp + (1 | verb_up),
-  data    = up_indep_first_ftp,
+  data    = olmo_indep_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_ftp_up_independently_first_layer")
+  file    = olmo_brms_path("model_ftp_up_independently_first_layer")
 )
-summary(model_ftp_up_independently_first_layer)
+olmo_model_ftp_up_subword_first_layer = brm(
+  formula = logit ~ log_ftp + (1 | verb_up),
+  data    = olmo_sub_first_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_ftp_up_subword_first_layer")
+)
+summary(olmo_model_ftp_up_independently_first_layer)
+summary(olmo_model_ftp_up_subword_first_layer)
 ```
 
 ### Effect of FTP at the final layer (bam — non-linear)
-```{r olmo-bam-ftp-final, eval = params$source == "olmo"}
+
+```{r olmo-bam-ftp-final}
 set.seed(964)
-bam_ftp_up_independently_final = cache_bam("bam_ftp_up_independently_final", function() {
+olmo_bam_ftp_up_independently_final = olmo_cache_bam("bam_ftp_up_independently_final", function() {
   bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
-      data = up_indep_final_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_indep_final_ftp, method = 'fREML', discrete = TRUE)
 })
-bam_ftp_up_subword_final = cache_bam("bam_ftp_up_subword_final", function() {
+olmo_bam_ftp_up_subword_final = olmo_cache_bam("bam_ftp_up_subword_final", function() {
   bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
-      data = up_sub_final_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_sub_final_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(bam_ftp_up_independently_final)
-summary(bam_ftp_up_subword_final)
+summary(olmo_bam_ftp_up_independently_final)
+summary(olmo_bam_ftp_up_subword_final)
 ```
 
 ### Effect of FTP across layers (mgcv)
-```{r olmo-bam-ftp-layers, eval = params$source == "olmo"}
-up_indep_ftp   = up_independently %>% filter(!is.na(log_ftp))
-up_subword_ftp = up_subword       %>% filter(!is.na(log_ftp))
+
+```{r olmo-bam-ftp-layers}
+olmo_indep_ftp   = olmo_indep %>% filter(!is.na(log_ftp))
+olmo_subword_ftp = olmo_sub   %>% filter(!is.na(log_ftp))
 
 set.seed(964)
-model_ftp_layer_up_independently = cache_bam("model_ftp_layer_up_independently", function() {
+olmo_model_ftp_layer_up_independently = olmo_cache_bam("model_ftp_layer_up_independently", function() {
   bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
-      data = up_indep_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_indep_ftp, method = 'fREML', discrete = TRUE)
 })
-model_ftp_layer_up_subword = cache_bam("model_ftp_layer_up_subword", function() {
+olmo_model_ftp_layer_up_subword = olmo_cache_bam("model_ftp_layer_up_subword", function() {
   bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
-      data = up_subword_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_subword_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(model_ftp_layer_up_independently)
-summary(model_ftp_layer_up_subword)
+summary(olmo_model_ftp_layer_up_independently)
+summary(olmo_model_ftp_layer_up_subword)
 ```
 
 ### FTP across layers — plots
-```{r olmo-plot-ftp-layers, eval = params$source == "olmo"}
-plots_ftp_indep   = plot_ftp_by_layer_mgcv(model_ftp_layer_up_independently,
-                                            up_indep_ftp, "UP independently", n_layers = 32)
-plots_ftp_subword = plot_ftp_by_layer_mgcv(model_ftp_layer_up_subword,
-                                            up_subword_ftp, "UP as subword", n_layers = 32)
+
+```{r olmo-plot-ftp-layers}
+plots_ftp_indep   = plot_ftp_by_layer_mgcv(olmo_model_ftp_layer_up_independently,
+                                            olmo_indep_ftp, "UP independently", n_layers = 32)
+plots_ftp_subword = plot_ftp_by_layer_mgcv(olmo_model_ftp_layer_up_subword,
+                                            olmo_subword_ftp, "UP as subword", n_layers = 32)
 (plots_ftp_indep$spaghetti + plots_ftp_subword$spaghetti) /
 (plots_ftp_indep$heatmap   + plots_ftp_subword$heatmap)   /
 (plots_ftp_indep$diff      + plots_ftp_subword$diff)
 ```
 
----
+------------------------------------------------------------------------
 
 ## OLMo — Joint frequency + predictability
 
 ### Additive freq + FTP at the final layer (brms)
-```{r olmo-brms-joint, eval = params$source == "olmo"}
-model_freq_ftp_up_independently = brm(
+
+```{r olmo-brms-joint}
+olmo_model_freq_ftp_up_independently = brm(
   formula = logit ~ log_freq + log_ftp + (1 | verb_up),
-  data    = up_indep_final_ftp,
+  data    = olmo_indep_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_ftp_up_independently")
+  file    = olmo_brms_path("model_freq_ftp_up_independently")
 )
-model_freq_ftp_up_subword = brm(
+olmo_model_freq_ftp_up_subword = brm(
   formula = logit ~ log_freq + log_ftp + (1 | verb_up),
-  data    = up_sub_final_ftp,
+  data    = olmo_sub_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_ftp_up_subword")
+  file    = olmo_brms_path("model_freq_ftp_up_subword")
 )
-summary(model_freq_ftp_up_independently)
-summary(model_freq_ftp_up_subword)
+summary(olmo_model_freq_ftp_up_independently)
+summary(olmo_model_freq_ftp_up_subword)
 ```
 
 ### Joint freq × FTP surface at final layer (bam)
-```{r olmo-bam-joint, eval = params$source == "olmo"}
+
+```{r olmo-bam-joint}
 set.seed(964)
-bam_joint_up_independently_final = cache_bam("bam_joint_up_independently_final", function() {
+olmo_bam_joint_up_independently_final = olmo_cache_bam("bam_joint_up_independently_final", function() {
   bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
-      data = up_indep_final_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_indep_final_ftp, method = 'fREML', discrete = TRUE)
 })
-bam_joint_up_subword_final = cache_bam("bam_joint_up_subword_final", function() {
+olmo_bam_joint_up_subword_final = olmo_cache_bam("bam_joint_up_subword_final", function() {
   bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
-      data = up_sub_final_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_sub_final_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(bam_joint_up_independently_final)
-summary(bam_joint_up_subword_final)
+summary(olmo_bam_joint_up_independently_final)
+summary(olmo_bam_joint_up_subword_final)
 ```
 
 ### Joint surface plots
-```{r olmo-plot-joint, eval = params$source == "olmo"}
-joint_indep   = plot_joint_surface(bam_joint_up_independently_final,
-                                   up_indep_final_ftp, "Joint freq×FTP: UP independently (final layer)")
-joint_subword = plot_joint_surface(bam_joint_up_subword_final,
-                                   up_sub_final_ftp, "Joint freq×FTP: UP as subword (final layer)")
+
+```{r olmo-plot-joint}
+joint_indep   = plot_joint_surface(olmo_bam_joint_up_independently_final,
+                                   olmo_indep_final_ftp, "Joint freq×FTP: UP independently (final layer)")
+joint_subword = plot_joint_surface(olmo_bam_joint_up_subword_final,
+                                   olmo_sub_final_ftp, "Joint freq×FTP: UP as subword (final layer)")
 joint_indep$heatmap + joint_subword$heatmap
 joint_indep$surface3d
 joint_subword$surface3d
 ```
 
 ### Freq and FTP effects across layers (additive bam)
-```{r olmo-bam-freq-ftp-layers, eval = params$source == "olmo"}
+
+```{r olmo-bam-freq-ftp-layers}
 set.seed(964)
-model_freq_ftp_layer_up_independently = cache_bam("model_freq_ftp_layer_up_independently", function() {
+olmo_model_freq_ftp_layer_up_independently = olmo_cache_bam("model_freq_ftp_layer_up_independently", function() {
   bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
-      data = up_indep_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_indep_ftp, method = 'fREML', discrete = TRUE)
 })
-model_freq_ftp_layer_up_subword = cache_bam("model_freq_ftp_layer_up_subword", function() {
+olmo_model_freq_ftp_layer_up_subword = olmo_cache_bam("model_freq_ftp_layer_up_subword", function() {
   bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
-      data = up_subword_ftp, method = 'fREML', discrete = TRUE)
+      data = olmo_subword_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(model_freq_ftp_layer_up_independently)
-summary(model_freq_ftp_layer_up_subword)
+summary(olmo_model_freq_ftp_layer_up_independently)
+summary(olmo_model_freq_ftp_layer_up_subword)
 ```
 
----
+------------------------------------------------------------------------
 
 # BabyLM OPT Analysis
 
-`r if (params$source != "babylm") "*(Not running — set params$source = 'babylm')*"`
+Each BabyLM model size (opt-125m, opt-350m, opt-1.3b) is analysed with its own separate statistical model throughout.
+
+## Setup
+
+```{r babylm-setup}
+BLM_TAGS     = c("opt-125m", "opt-350m", "opt-1.3b")
+BLM_N_LAYERS = c("opt-125m" = 12L, "opt-350m" = 24L, "opt-1.3b" = 24L)
+
+# Short slug for cache file names: "opt-125m" -> "125m", "opt-1.3b" -> "13b"
+blm_slug = function(tag) gsub("\\.", "", gsub("opt-", "", tag))
+```
 
 ## BabyLM plot helpers
-```{r babylm-plot-helpers, eval = params$source == "babylm"}
-plot_final_layer_by_model = function(model_fit, data, title) {
-  log_freq_seq = seq(min(data$log_freq), max(data$log_freq), length.out = 100)
-  newdata = expand.grid(log_freq = log_freq_seq, model = levels(data$model)) %>%
-    mutate(verb_up = NA)
-  epred = add_epred_draws(newdata, model_fit, re_formula = NA, ndraws = 500)
-  epred %>%
-    ggplot(aes(x = log_freq, y = .epred, color = model, fill = model)) +
-    stat_lineribbon(.width = 0.95, alpha = 0.2) +
-    stat_summary(data = data, aes(x = log_freq, y = logit, color = model),
-                 fun = mean, geom = "point", size = 1, alpha = 0.5) +
-    labs(title = title, x = "log(frequency)", y = "Predicted logit",
-         fill = "Model", color = "Model") +
-    theme_minimal(base_size = 13) +
-    theme(plot.title = element_text(size = 11, face = "bold", margin = margin(b = 8)),
-          panel.grid.minor = element_blank(), legend.position = "bottom")
-}
 
-plot_freq_by_layer_by_model = function(model_fit, data, condition_label) {
-  layer_norm_seq = seq(0, 1, length.out = 50)
-  log_freq_seq   = seq(min(data$log_freq), max(data$log_freq), length.out = 50)
-  log_freq_lo    = quantile(data$log_freq, 0.1)
-  log_freq_hi    = quantile(data$log_freq, 0.9)
-  newdata_sp = expand.grid(layer_norm = layer_norm_seq, log_freq = log_freq_seq,
-                            model = levels(data$model)) %>%
-    mutate(verb_up = data$verb_up[1])
-  preds_sp = predict(model_fit, newdata = newdata_sp, se.fit = TRUE, exclude = 's(verb_up)')
-  newdata_sp$fit = preds_sp$fit
-  p_sp = newdata_sp %>%
-    ggplot(aes(x = log_freq, y = fit, color = layer_norm,
-               group = interaction(model, layer_norm))) +
-    geom_line(linewidth = 0.5, alpha = 0.7) + facet_wrap(~model) +
-    scale_color_viridis_c(option = "plasma", name = "Layer\n(normalized)") +
-    labs(title = paste0(condition_label, ": freq effect by layer (normalized) — by model"),
-         x = "log(frequency)", y = "Predicted logit") + theme_minimal()
-  newdata_diff = expand.grid(layer_norm = layer_norm_seq, model = levels(data$model),
-                              freq_level = c("low", "high")) %>%
-    mutate(log_freq = ifelse(freq_level == "low", log_freq_lo, log_freq_hi),
-           verb_up  = data$verb_up[1])
-  preds_diff = predict(model_fit, newdata = newdata_diff, se.fit = TRUE, exclude = 's(verb_up)')
-  newdata_diff$fit = preds_diff$fit; newdata_diff$se = preds_diff$se.fit
-  p_diff = newdata_diff %>%
-    select(layer_norm, model, freq_level, fit, se) %>%
-    pivot_wider(names_from = freq_level, values_from = c(fit, se)) %>%
-    mutate(diff = fit_high - fit_low, se_diff = sqrt(se_high^2 + se_low^2),
-           lo95 = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff) %>%
-    ggplot(aes(x = layer_norm, y = diff, color = model, fill = model)) +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95), alpha = 0.2, color = NA) +
-    geom_line(linewidth = 1) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
-    labs(title = paste0(condition_label, ": frequency effect (high − low) across layers — by model"),
-         x = "Normalized layer (0 = first, 1 = final)",
-         y = "Difference in predicted logit", color = "Model", fill = "Model") +
-    theme_minimal()
-  list(spaghetti = p_sp, diff = p_diff)
-}
-
-plot_ftp_by_layer_by_model = function(model_fit, data, condition_label) {
-  layer_norm_seq = seq(0, 1, length.out = 50)
-  log_ftp_seq    = seq(min(data$log_ftp, na.rm = TRUE), max(data$log_ftp, na.rm = TRUE), length.out = 50)
-  ftp_lo = quantile(data$log_ftp, 0.1, na.rm = TRUE)
-  ftp_hi = quantile(data$log_ftp, 0.9, na.rm = TRUE)
-  newdata_sp = expand.grid(layer_norm = layer_norm_seq, log_ftp = log_ftp_seq,
-                            model = levels(data$model)) %>%
-    mutate(verb_up = data$verb_up[1])
-  preds_sp = predict(model_fit, newdata = newdata_sp, se.fit = TRUE, exclude = 's(verb_up)')
-  newdata_sp$fit = preds_sp$fit
-  p_sp = newdata_sp %>%
-    ggplot(aes(x = log_ftp, y = fit, color = layer_norm,
-               group = interaction(model, layer_norm))) +
-    geom_line(linewidth = 0.5, alpha = 0.7) + facet_wrap(~model) +
-    scale_color_viridis_c(option = "plasma", name = "Layer\n(normalized)") +
-    labs(title = paste0(condition_label, ": FTP effect by layer — by model"),
-         x = "log(FTP)", y = "Predicted logit") + theme_minimal()
-  newdata_diff = expand.grid(layer_norm = layer_norm_seq, model = levels(data$model),
-                              ftp_level = c("low", "high")) %>%
-    mutate(log_ftp = ifelse(ftp_level == "low", ftp_lo, ftp_hi), verb_up = data$verb_up[1])
-  preds_diff = predict(model_fit, newdata = newdata_diff, se.fit = TRUE, exclude = 's(verb_up)')
-  newdata_diff$fit = preds_diff$fit; newdata_diff$se = preds_diff$se.fit
-  p_diff = newdata_diff %>%
-    select(layer_norm, model, ftp_level, fit, se) %>%
-    pivot_wider(names_from = ftp_level, values_from = c(fit, se)) %>%
-    mutate(diff = fit_high - fit_low, se_diff = sqrt(se_high^2 + se_low^2),
-           lo95 = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff) %>%
-    ggplot(aes(x = layer_norm, y = diff, color = model, fill = model)) +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95), alpha = 0.2, color = NA) +
-    geom_line(linewidth = 1) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
-    labs(title = paste0(condition_label, ": FTP effect (high − low) across layers — by model"),
-         x = "Normalized layer (0 = first, 1 = final)",
-         y = "Difference in predicted logit", color = "Model", fill = "Model") +
-    theme_minimal()
-  list(spaghetti = p_sp, diff = p_diff)
+```{r babylm-plot-helpers}
+# Wraps a list of ggplot objects into a single patchwork figure
+blm_wrap_plots = function(plot_list, ncol = 3) {
+  wrap_plots(plot_list, ncol = ncol)
 }
 ```
 
 ## UP independently
 
-### Frequency at the final layer — by model (brms)
-```{r babylm-brms-freq-indep-final, eval = params$source == "babylm"}
-model_freq_up_independently = brm(
-  formula = logit ~ log_freq * model + (1 | verb_up),
-  data    = up_indep_final,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_independently")
-)
-summary(model_freq_up_independently)
-```
+### Frequency at the final layer — per model (brms)
 
-### Frequency at the first layer — by model (brms)
-```{r babylm-brms-freq-indep-first, eval = params$source == "babylm"}
-model_freq_up_independently_first_layer = brm(
-  formula = logit ~ log_freq * model + (1 | verb_up),
-  data    = up_indep_first,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_independently_first_layer")
-)
-summary(model_freq_up_independently_first_layer)
-```
-
-### Frequency at the final layer — by model (bam — non-linear)
-```{r babylm-bam-freq-indep-final, eval = params$source == "babylm"}
-set.seed(964)
-bam_freq_up_independently_final = cache_bam("bam_freq_up_independently_final", function() {
-  bam(logit ~ model + s(log_freq, by = model) + s(verb_up, bs = 're'),
-      data = up_indep_final, method = 'fREML', discrete = TRUE)
+```{r babylm-brms-freq-indep-final}
+blm_freq_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq + (1 | verb_up),
+    data    = blm_indep_final %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_freq_indep_final_", blm_slug(tag)))
+  )
 })
-summary(bam_freq_up_independently_final)
+lapply(blm_freq_indep_final_models, summary)
 ```
 
-### Frequency at the first layer — by model (bam — non-linear)
-```{r babylm-bam-freq-indep-first, eval = params$source == "babylm"}
-set.seed(964)
-bam_freq_up_independently_first = cache_bam("bam_freq_up_independently_first", function() {
-  bam(logit ~ model + s(log_freq, by = model) + s(verb_up, bs = 're'),
-      data = up_indep_first, method = 'fREML', discrete = TRUE)
+### Frequency at the first layer — per model (brms)
+
+```{r babylm-brms-freq-indep-first}
+blm_freq_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq + (1 | verb_up),
+    data    = blm_indep_first %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_freq_indep_first_", blm_slug(tag)))
+  )
 })
-summary(bam_freq_up_independently_first)
+lapply(blm_freq_indep_first_models, summary)
 ```
 
-### Frequency × layer — by model (mgcv, normalized layers)
-```{r babylm-bam-freq-layer-indep, eval = params$source == "babylm"}
+### Frequency at the final layer — per model (bam — non-linear)
+
+```{r babylm-bam-freq-indep-final}
 set.seed(964)
-model_freq_layer_up_independently = cache_bam("model_freq_layer_up_independently", function() {
-  bam(logit ~ model + te(log_freq, layer_norm, by = model) + s(verb_up, bs = 're'),
-      data = up_independently, method = 'fREML', discrete = TRUE)
+blm_bam_freq_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_freq_indep_final_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
+        data = blm_indep_final %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-summary(model_freq_layer_up_independently)
+lapply(blm_bam_freq_indep_final_models, summary)
+```
+
+### Frequency at the first layer — per model (bam — non-linear)
+
+```{r babylm-bam-freq-indep-first}
+set.seed(964)
+blm_bam_freq_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_freq_indep_first_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
+        data = blm_indep_first %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(blm_bam_freq_indep_first_models, summary)
+```
+
+### Frequency × layer — per model (mgcv)
+
+```{r babylm-bam-freq-layer-indep}
+set.seed(964)
+blm_freq_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_freq_layer_indep_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+        data = blm_indep %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(blm_freq_layer_indep_models, summary)
 ```
 
 ## UP as a subword
 
-### Frequency at the final layer — by model (brms)
-```{r babylm-brms-freq-sub-final, eval = params$source == "babylm"}
-model_freq_up_subword = brm(
-  formula = logit ~ log_freq * model + (1 | verb_up),
-  data    = up_sub_final,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_subword")
-)
-summary(model_freq_up_subword)
-```
+### Frequency at the final layer — per model (brms)
 
-### Frequency at the first layer — by model (brms)
-```{r babylm-brms-freq-sub-first, eval = params$source == "babylm"}
-model_freq_up_subword_first_layer = brm(
-  formula = logit ~ log_freq * model + (1 | verb_up),
-  data    = up_sub_first,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_up_subword_first_layer")
-)
-summary(model_freq_up_subword_first_layer)
-```
-
-### Frequency at the final layer — by model (bam — non-linear)
-```{r babylm-bam-freq-sub-final, eval = params$source == "babylm"}
-set.seed(964)
-bam_freq_up_subword_final = cache_bam("bam_freq_up_subword_final", function() {
-  bam(logit ~ model + s(log_freq, k = 10, by = model) + s(verb_up, bs = 're'),
-      data = up_sub_final, method = 'fREML', discrete = TRUE)
+```{r babylm-brms-freq-sub-final}
+blm_freq_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq + (1 | verb_up),
+    data    = blm_sub_final %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_freq_sub_final_", blm_slug(tag)))
+  )
 })
-summary(bam_freq_up_subword_final)
+lapply(blm_freq_sub_final_models, summary)
 ```
 
-### Frequency at the first layer — by model (bam — non-linear)
-```{r babylm-bam-freq-sub-first, eval = params$source == "babylm"}
-set.seed(964)
-bam_freq_up_subword_first = cache_bam("bam_freq_up_subword_first", function() {
-  bam(logit ~ model + s(log_freq, k = 10, by = model) + s(verb_up, bs = 're'),
-      data = up_sub_first, method = 'fREML', discrete = TRUE)
+### Frequency at the first layer — per model (brms)
+
+```{r babylm-brms-freq-sub-first}
+blm_freq_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq + (1 | verb_up),
+    data    = blm_sub_first %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_freq_sub_first_", blm_slug(tag)))
+  )
 })
-summary(bam_freq_up_subword_first)
+lapply(blm_freq_sub_first_models, summary)
 ```
 
-### Frequency × layer — by model (mgcv, normalized layers)
-```{r babylm-bam-freq-layer-sub, eval = params$source == "babylm"}
+### Frequency at the final layer — per model (bam — non-linear)
+
+```{r babylm-bam-freq-sub-final}
 set.seed(964)
-model_freq_layer_up_subword = cache_bam("model_freq_layer_up_subword", function() {
-  bam(logit ~ model + te(log_freq, layer_norm, by = model) + s(verb_up, bs = 're'),
-      data = up_subword, method = 'fREML', discrete = TRUE)
+blm_bam_freq_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_freq_sub_final_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_freq, k = 10) + s(verb_up, bs = 're'),
+        data = blm_sub_final %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-summary(model_freq_layer_up_subword)
+lapply(blm_bam_freq_sub_final_models, summary)
+```
+
+### Frequency at the first layer — per model (bam — non-linear)
+
+```{r babylm-bam-freq-sub-first}
+set.seed(964)
+blm_bam_freq_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_freq_sub_first_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_freq, k = 10) + s(verb_up, bs = 're'),
+        data = blm_sub_first %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(blm_bam_freq_sub_first_models, summary)
+```
+
+### Frequency × layer — per model (mgcv)
+
+```{r babylm-bam-freq-layer-sub}
+set.seed(964)
+blm_freq_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_freq_layer_sub_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+        data = blm_sub %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(blm_freq_layer_sub_models, summary)
 ```
 
 ## BabyLM frequency plots
-```{r babylm-freq-plots, eval = params$source == "babylm"}
-p_indep_final = plot_final_layer_by_model(model_freq_up_independently,
-  up_indep_final, "UP independently: frequency effect at final layer — by model")
-p_sub_final   = plot_final_layer_by_model(model_freq_up_subword,
-  up_sub_final,   "UP as subword: frequency effect at final layer — by model")
-p_indep_first = plot_final_layer_by_model(model_freq_up_independently_first_layer,
-  up_indep_first, "UP independently: frequency effect at first layer — by model")
-p_sub_first   = plot_final_layer_by_model(model_freq_up_subword_first_layer,
-  up_sub_first,   "UP as subword: frequency effect at first layer — by model")
-(p_indep_first | p_sub_first) / (p_indep_final | p_sub_final)
 
-plots_indep   = plot_freq_by_layer_by_model(model_freq_layer_up_independently,
-                                             up_independently, "UP independently")
-plots_subword = plot_freq_by_layer_by_model(model_freq_layer_up_subword,
-                                             up_subword, "UP as subword")
-plots_indep$spaghetti;   plots_indep$diff
-plots_subword$spaghetti; plots_subword$diff
+```{r babylm-freq-plots}
+# Final layer brms plots — one panel per model size
+blm_wrap_plots(lapply(BLM_TAGS, function(tag) {
+  plot_final_layer(blm_freq_indep_final_models[[tag]],
+                   blm_indep_final %>% filter(model == tag),
+                   paste0("UP indep: freq at final layer — ", tag))
+}))
+
+blm_wrap_plots(lapply(BLM_TAGS, function(tag) {
+  plot_final_layer(blm_freq_sub_final_models[[tag]],
+                   blm_sub_final %>% filter(model == tag),
+                   paste0("UP subword: freq at final layer — ", tag))
+}))
+
+# Frequency × layer spaghetti + diff plots per model
+lapply(BLM_TAGS, function(tag) {
+  plots = plot_freq_by_layer_mgcv(blm_freq_layer_indep_models[[tag]],
+                                   blm_indep %>% filter(model == tag),
+                                   paste0("UP indep — ", tag),
+                                   n_layers = BLM_N_LAYERS[[tag]])
+  print(plots$spaghetti); print(plots$diff)
+})
+lapply(BLM_TAGS, function(tag) {
+  plots = plot_freq_by_layer_mgcv(blm_freq_layer_sub_models[[tag]],
+                                   blm_sub %>% filter(model == tag),
+                                   paste0("UP subword — ", tag),
+                                   n_layers = BLM_N_LAYERS[[tag]])
+  print(plots$spaghetti); print(plots$diff)
+})
 ```
 
----
+------------------------------------------------------------------------
 
-## BabyLM — Predictability (FTP = P(up|V))
+## BabyLM — Predictability (FTP = P(up\|V))
 
-### Effect of FTP at the final layer — by model (brms)
-```{r babylm-brms-ftp-final, eval = params$source == "babylm"}
-up_indep_final_ftp = up_indep_final %>% filter(!is.na(log_ftp))
-up_sub_final_ftp   = up_sub_final   %>% filter(!is.na(log_ftp))
-up_indep_first_ftp = up_indep_first %>% filter(!is.na(log_ftp))
-up_sub_first_ftp   = up_sub_first   %>% filter(!is.na(log_ftp))
-
-model_ftp_up_independently = brm(
-  formula = logit ~ log_ftp * model + (1 | verb_up),
-  data    = up_indep_final_ftp,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_ftp_up_independently")
-)
-model_ftp_up_independently_first_layer = brm(
-  formula = logit ~ log_ftp * model + (1 | verb_up),
-  data    = up_indep_first_ftp,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_ftp_up_independently_first_layer")
-)
-summary(model_ftp_up_independently)
-summary(model_ftp_up_independently_first_layer)
+```{r babylm-ftp-subsets}
+blm_indep_final_ftp = blm_indep_final %>% filter(!is.na(log_ftp))
+blm_sub_final_ftp   = blm_sub_final   %>% filter(!is.na(log_ftp))
+blm_indep_first_ftp = blm_indep_first %>% filter(!is.na(log_ftp))
+blm_sub_first_ftp   = blm_sub_first   %>% filter(!is.na(log_ftp))
+blm_indep_ftp       = blm_indep       %>% filter(!is.na(log_ftp))
+blm_subword_ftp     = blm_sub         %>% filter(!is.na(log_ftp))
 ```
 
-### Effect of FTP at the final layer — by model (bam — non-linear)
-```{r babylm-bam-ftp-final, eval = params$source == "babylm"}
+### FTP at the final layer — per model (brms)
+
+```{r babylm-brms-ftp-final}
+blm_ftp_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_ftp + (1 | verb_up),
+    data    = blm_indep_final_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_ftp_indep_final_", blm_slug(tag)))
+  )
+})
+blm_ftp_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_ftp + (1 | verb_up),
+    data    = blm_sub_final_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_ftp_sub_final_", blm_slug(tag)))
+  )
+})
+lapply(blm_ftp_indep_final_models, summary)
+lapply(blm_ftp_sub_final_models, summary)
+```
+
+### FTP at the first layer — per model (brms)
+
+```{r babylm-brms-ftp-first}
+blm_ftp_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_ftp + (1 | verb_up),
+    data    = blm_indep_first_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_ftp_indep_first_", blm_slug(tag)))
+  )
+})
+blm_ftp_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_ftp + (1 | verb_up),
+    data    = blm_sub_first_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_ftp_sub_first_", blm_slug(tag)))
+  )
+})
+lapply(blm_ftp_indep_first_models, summary)
+lapply(blm_ftp_sub_first_models, summary)
+```
+
+### FTP at the final layer — per model (bam — non-linear)
+
+```{r babylm-bam-ftp-final}
 set.seed(964)
-bam_ftp_up_independently_final = cache_bam("bam_ftp_up_independently_final", function() {
-  bam(logit ~ model + s(log_ftp, by = model) + s(verb_up, bs = 're'),
-      data = up_indep_final_ftp, method = 'fREML', discrete = TRUE)
+blm_bam_ftp_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_ftp_indep_final_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+        data = blm_indep_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-bam_ftp_up_subword_final = cache_bam("bam_ftp_up_subword_final", function() {
-  bam(logit ~ model + s(log_ftp, by = model) + s(verb_up, bs = 're'),
-      data = up_sub_final_ftp, method = 'fREML', discrete = TRUE)
+blm_bam_ftp_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_ftp_sub_final_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+        data = blm_sub_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-summary(bam_ftp_up_independently_final)
-summary(bam_ftp_up_subword_final)
+lapply(blm_bam_ftp_indep_final_models, summary)
+lapply(blm_bam_ftp_sub_final_models, summary)
 ```
 
-### Effect of FTP across layers — by model (mgcv, normalized layers)
-```{r babylm-bam-ftp-layers, eval = params$source == "babylm"}
-up_indep_ftp   = up_independently %>% filter(!is.na(log_ftp))
-up_subword_ftp = up_subword       %>% filter(!is.na(log_ftp))
+### FTP × layer — per model (mgcv)
 
+```{r babylm-bam-ftp-layers}
 set.seed(964)
-model_ftp_layer_up_independently = cache_bam("model_ftp_layer_up_independently", function() {
-  bam(logit ~ model + te(log_ftp, layer_norm, by = model) + s(verb_up, bs = 're'),
-      data = up_indep_ftp, method = 'fREML', discrete = TRUE)
+blm_ftp_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_ftp_layer_indep_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+        data = blm_indep_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-model_ftp_layer_up_subword = cache_bam("model_ftp_layer_up_subword", function() {
-  bam(logit ~ model + te(log_ftp, layer_norm, by = model) + s(verb_up, bs = 're'),
-      data = up_subword_ftp, method = 'fREML', discrete = TRUE)
+blm_ftp_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_ftp_layer_sub_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+        data = blm_subword_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-summary(model_ftp_layer_up_independently)
-summary(model_ftp_layer_up_subword)
+lapply(blm_ftp_layer_indep_models, summary)
+lapply(blm_ftp_layer_sub_models, summary)
 ```
 
-### FTP plots — by model
-```{r babylm-ftp-plots, eval = params$source == "babylm"}
-plots_ftp_indep   = plot_ftp_by_layer_by_model(model_ftp_layer_up_independently,
-                                                up_indep_ftp, "UP independently")
-plots_ftp_subword = plot_ftp_by_layer_by_model(model_ftp_layer_up_subword,
-                                                up_subword_ftp, "UP as subword")
-plots_ftp_indep$spaghetti;   plots_ftp_indep$diff
-plots_ftp_subword$spaghetti; plots_ftp_subword$diff
+### FTP plots — per model
+
+```{r babylm-ftp-plots}
+lapply(BLM_TAGS, function(tag) {
+  plots = plot_ftp_by_layer_mgcv(blm_ftp_layer_indep_models[[tag]],
+                                  blm_indep_ftp %>% filter(model == tag),
+                                  paste0("UP indep — ", tag),
+                                  n_layers = BLM_N_LAYERS[[tag]])
+  print(plots$spaghetti); print(plots$diff)
+})
+lapply(BLM_TAGS, function(tag) {
+  plots = plot_ftp_by_layer_mgcv(blm_ftp_layer_sub_models[[tag]],
+                                  blm_subword_ftp %>% filter(model == tag),
+                                  paste0("UP subword — ", tag),
+                                  n_layers = BLM_N_LAYERS[[tag]])
+  print(plots$spaghetti); print(plots$diff)
+})
 ```
 
----
+------------------------------------------------------------------------
 
 ## BabyLM — Joint frequency + predictability
 
-### Additive freq + FTP at the final layer — by model (brms)
-```{r babylm-brms-joint, eval = params$source == "babylm"}
-model_freq_ftp_up_independently = brm(
-  formula = logit ~ log_freq * model + log_ftp * model + (1 | verb_up),
-  data    = up_indep_final_ftp,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_ftp_up_independently")
-)
-model_freq_ftp_up_subword = brm(
-  formula = logit ~ log_freq * model + log_ftp * model + (1 | verb_up),
-  data    = up_sub_final_ftp,
-  prior   = priors,
-  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_ftp_up_subword")
-)
-summary(model_freq_ftp_up_independently)
-summary(model_freq_ftp_up_subword)
+### Additive freq + FTP at the final layer — per model (brms)
+
+```{r babylm-brms-joint}
+blm_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+    data    = blm_indep_final_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_joint_indep_final_", blm_slug(tag)))
+  )
+})
+blm_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+    data    = blm_sub_final_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_joint_sub_final_", blm_slug(tag)))
+  )
+})
+lapply(blm_joint_indep_final_models, summary)
+lapply(blm_joint_sub_final_models, summary)
 ```
 
-### Joint freq × FTP surface at final layer — by model (bam)
-```{r babylm-bam-joint, eval = params$source == "babylm"}
+### Joint freq × FTP surface at final layer — per model (bam)
+
+```{r babylm-bam-joint}
 set.seed(964)
-bam_joint_up_independently_final = cache_bam("bam_joint_up_independently_final", function() {
-  bam(logit ~ model + te(log_freq, log_ftp, by = model) + s(verb_up, bs = 're'),
-      data = up_indep_final_ftp, method = 'fREML', discrete = TRUE)
+blm_bam_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_joint_indep_final_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+        data = blm_indep_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-bam_joint_up_subword_final = cache_bam("bam_joint_up_subword_final", function() {
-  bam(logit ~ model + te(log_freq, log_ftp, by = model) + s(verb_up, bs = 're'),
-      data = up_sub_final_ftp, method = 'fREML', discrete = TRUE)
+blm_bam_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_joint_sub_final_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+        data = blm_sub_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-summary(bam_joint_up_independently_final)
-summary(bam_joint_up_subword_final)
+lapply(blm_bam_joint_indep_final_models, summary)
+lapply(blm_bam_joint_sub_final_models, summary)
 ```
 
-### Freq and FTP across layers — by model (additive bam)
-```{r babylm-bam-freq-ftp-layers, eval = params$source == "babylm"}
+### Joint surface plots — per model
+
+```{r babylm-plot-joint}
+lapply(BLM_TAGS, function(tag) {
+  print(plot_joint_surface(blm_bam_joint_indep_final_models[[tag]],
+                            blm_indep_final_ftp %>% filter(model == tag),
+                            paste0("Joint freq×FTP: UP indep — ", tag))$heatmap)
+})
+lapply(BLM_TAGS, function(tag) {
+  print(plot_joint_surface(blm_bam_joint_sub_final_models[[tag]],
+                            blm_sub_final_ftp %>% filter(model == tag),
+                            paste0("Joint freq×FTP: UP subword — ", tag))$heatmap)
+})
+```
+
+### Freq and FTP across layers — per model (additive bam)
+
+```{r babylm-bam-freq-ftp-layers}
 set.seed(964)
-model_freq_ftp_layer_up_independently = cache_bam("model_freq_ftp_layer_up_independently", function() {
-  bam(logit ~ model + te(log_freq, layer_norm, by = model) +
-        te(log_ftp, layer_norm, by = model) + s(verb_up, bs = 're'),
-      data = up_indep_ftp, method = 'fREML', discrete = TRUE)
+blm_freq_ftp_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_freq_ftp_layer_indep_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+        data = blm_indep_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-model_freq_ftp_layer_up_subword = cache_bam("model_freq_ftp_layer_up_subword", function() {
-  bam(logit ~ model + te(log_freq, layer_norm, by = model) +
-        te(log_ftp, layer_norm, by = model) + s(verb_up, bs = 're'),
-      data = up_subword_ftp, method = 'fREML', discrete = TRUE)
+blm_freq_ftp_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_freq_ftp_layer_sub_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+        data = blm_subword_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
 })
-summary(model_freq_ftp_layer_up_independently)
-summary(model_freq_ftp_layer_up_subword)
+lapply(blm_freq_ftp_layer_indep_models, summary)
+lapply(blm_freq_ftp_layer_sub_models, summary)
 ```
 
----
+------------------------------------------------------------------------
 
 # Whisper-small Analysis
 
-`r if (params$source != "whisper") "*(Not running — set params$source = 'whisper')*"`
-
 Whisper embeddings are extracted via a single forward pass per utterance:
 
-- **Encoder**: the hidden states at a given layer are mean-pooled over the audio
-  frames spanning the "up" word's time window (WhisperX word-level timestamps,
-  20 ms per encoder output frame). The resulting vector is the "up" embedding.
-- **Decoder**: hidden states are extracted at the exact token position of "up"
-  using teacher-forced decoding (the gold transcript is fed as decoder input).
+-   **Encoder**: the hidden states at a given layer are mean-pooled over the audio frames spanning the "up" word's time window (WhisperX word-level timestamps, 20 ms per encoder output frame). The resulting vector is the "up" embedding.
+-   **Decoder**: hidden states are extracted at the exact token position of "up" using teacher-forced decoding (the gold transcript is fed as decoder input).
 
-A separate logistic regression classifier is trained **at each layer
-independently** on standalone "up" (positive) vs. random other-word (negative)
-embeddings. The classifier trained at layer *L* is then applied to V+up test
-embeddings extracted from that same layer *L*. No classifier trained on one
-layer is ever applied to another layer's embeddings.
+A separate logistic regression classifier is trained **at each layer independently** on standalone "up" (positive) vs. random other-word (negative) embeddings. The classifier trained at layer *L* is then applied to V+up test embeddings extracted from that same layer *L*. No classifier trained on one layer is ever applied to another layer's embeddings.
 
 ## Effect of frequency at the final layer — by component (brms)
-```{r whisper-brms-freq-final, eval = params$source == "whisper"}
-model_freq_final = brm(
+
+```{r whisper-brms-freq-final}
+wh_model_freq_final = brm(
   formula = logit ~ log_freq * component + (1 | verb_up),
   data    = whisper_final,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_final")
+  file    = wh_brms_path("model_freq_final")
 )
-summary(model_freq_final)
+summary(wh_model_freq_final)
 ```
 
 ## Effect of frequency at the first layer — by component (brms)
-```{r whisper-brms-freq-first, eval = params$source == "whisper"}
-model_freq_first = brm(
+
+```{r whisper-brms-freq-first}
+wh_model_freq_first = brm(
   formula = logit ~ log_freq * component + (1 | verb_up),
   data    = whisper_first,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = brms_path("model_freq_first")
+  file    = wh_brms_path("model_freq_first")
 )
-summary(model_freq_first)
+summary(wh_model_freq_first)
 ```
 
 ## Effect of frequency at the final layer — by component (bam — non-linear)
-```{r whisper-bam-freq-final, eval = params$source == "whisper"}
+
+```{r whisper-bam-freq-final}
 set.seed(964)
-bam_freq_final = cache_bam("bam_freq_final", function() {
+wh_bam_freq_final = wh_cache_bam("bam_freq_final", function() {
   bam(logit ~ component + s(log_freq, by = component) + s(verb_up, bs = 're'),
       data = whisper_final, method = 'fREML', discrete = TRUE)
 })
-summary(bam_freq_final)
+summary(wh_bam_freq_final)
 ```
 
 ## Effect of frequency across all layers — by component (mgcv)
-```{r whisper-bam-freq-layer, eval = params$source == "whisper"}
+
+```{r whisper-bam-freq-layer}
 set.seed(964)
-model_freq_layer = cache_bam("model_freq_layer", function() {
+wh_model_freq_layer = wh_cache_bam("model_freq_layer", function() {
   bam(logit ~ component + te(log_freq, layer, by = component) + s(verb_up, bs = 're'),
       data = whisper_all, method = 'fREML', discrete = TRUE)
 })
-summary(model_freq_layer)
+summary(wh_model_freq_layer)
 ```
 
 ## Whisper plots
 
 ### Final and first layer — frequency effect by component (brms)
-```{r whisper-plot-brms-freq, eval = params$source == "whisper"}
+
+```{r whisper-plot-brms-freq}
 plot_layer_by_component = function(model_fit, data, title) {
   log_freq_seq = seq(min(data$log_freq), max(data$log_freq), length.out = 100)
   newdata = expand.grid(log_freq = log_freq_seq, component = levels(data$component)) %>%
@@ -1103,15 +1367,16 @@ plot_layer_by_component = function(model_fit, data, title) {
           panel.grid.minor = element_blank(), legend.position = "bottom")
 }
 
-p_final = plot_layer_by_component(model_freq_final, whisper_final,
+p_final = plot_layer_by_component(wh_model_freq_final, whisper_final,
   "Whisper-small: frequency effect at final layer (11) — encoder vs decoder")
-p_first = plot_layer_by_component(model_freq_first, whisper_first,
+p_first = plot_layer_by_component(wh_model_freq_first, whisper_first,
   "Whisper-small: frequency effect at first layer (0) — encoder vs decoder")
 p_first / p_final
 ```
 
 ### Across layers — frequency effect by component (mgcv)
-```{r whisper-plot-freq-layers, eval = params$source == "whisper"}
+
+```{r whisper-plot-freq-layers}
 plot_freq_by_layer_whisper = function(model_fit, data, title) {
   layer_seq    = 0:11
   log_freq_seq = seq(min(data$log_freq), max(data$log_freq), length.out = 50)
@@ -1165,32 +1430,29 @@ plot_freq_by_layer_whisper = function(model_fit, data, title) {
   list(spaghetti = p_sp, diff = p_diff, heatmap = p_heat)
 }
 
-plots_whisper = plot_freq_by_layer_whisper(model_freq_layer, whisper_all, "Whisper-small")
+plots_whisper = plot_freq_by_layer_whisper(wh_model_freq_layer, whisper_all, "Whisper-small")
 plots_whisper$spaghetti
 plots_whisper$diff
 plots_whisper$heatmap
 ```
 
 ### Classifier validation accuracy across layers — encoder vs decoder
-```{r whisper-val-accuracy, eval = params$source == "whisper"}
+
+```{r whisper-val-accuracy}
 read_layer_meta = function(path, component) {
   meta = jsonlite::fromJSON(path)
-  tibble(
-    layer       = sapply(meta$layers, `[[`, "layer"),
-    component   = component,
-    val_acc     = sapply(meta$layers, `[[`, "val_acc"),
-    val_up_acc  = sapply(meta$layers, `[[`, "val_up_acc"),
-    val_oth_acc = sapply(meta$layers, `[[`, "val_other_acc"),
-    cv_mean     = sapply(meta$layers, `[[`, "cv_mean"),
-  )
+  meta$layers %>%
+    mutate(component = component) %>%
+    rename(val_oth_acc = val_other_acc) %>%
+    select(layer, component, val_acc, val_up_acc, val_oth_acc, cv_mean)
 }
 
 meta_enc = read_layer_meta('../Data/whisper/encoder/layer_metadata.json', 'encoder')
 meta_dec = read_layer_meta('../Data/whisper/decoder/layer_metadata.json', 'decoder')
-meta = bind_rows(meta_enc, meta_dec) %>%
+wh_meta = bind_rows(meta_enc, meta_dec) %>%
   mutate(component = factor(component, levels = c("encoder", "decoder")))
 
-meta %>%
+wh_meta %>%
   ggplot(aes(x = layer, y = val_acc, color = component)) +
   geom_line(linewidth = 1) + geom_point(size = 2) +
   scale_color_manual(values = c("encoder" = "#1a9850", "decoder" = "#d73027")) +
@@ -1200,17 +1462,18 @@ meta %>%
 ```
 
 ### Spearman correlation between log(frequency) and mean logit — across layers
-```{r whisper-spearman, eval = params$source == "whisper"}
-summary_by_layer = whisper_all %>%
+
+```{r whisper-spearman}
+wh_summary_by_layer = whisper_all %>%
   group_by(component, layer, verb_up, frequency) %>%
   summarise(mean_logit = mean(logit), .groups = "drop")
 
-cor_by_layer = summary_by_layer %>%
+wh_cor_by_layer = wh_summary_by_layer %>%
   group_by(component, layer) %>%
   summarise(spearman_r = cor(log(frequency), mean_logit, method = "spearman"),
             .groups = "drop")
 
-cor_by_layer %>%
+wh_cor_by_layer %>%
   ggplot(aes(x = layer, y = spearman_r, color = component)) +
   geom_line(linewidth = 1) + geom_point(size = 2) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
@@ -1222,7 +1485,8 @@ cor_by_layer %>%
 ```
 
 ### Most and least compositional V+up types — final layer
-```{r whisper-top-bottom, eval = params$source == "whisper"}
+
+```{r whisper-top-bottom}
 plot_top_bottom = function(data, component_name, layer_num = 11) {
   d = data %>%
     filter(component == component_name, layer == layer_num) %>%
@@ -1246,4 +1510,186 @@ plot_top_bottom = function(data, component_name, layer_num = 11) {
 
 plot_top_bottom(whisper_all, "encoder") /
 plot_top_bottom(whisper_all, "decoder")
+```
+
+------------------------------------------------------------------------
+
+## Whisper — Predictability (FTP = P(up\|V))
+
+### Effect of FTP at the final layer — by component (brms)
+
+```{r whisper-brms-ftp-final}
+whisper_final_ftp = whisper_final %>% filter(!is.na(log_ftp))
+whisper_first_ftp = whisper_first %>% filter(!is.na(log_ftp))
+
+wh_model_ftp_final = brm(
+  formula = logit ~ log_ftp * component + (1 | verb_up),
+  data    = whisper_final_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = wh_brms_path("model_ftp_final")
+)
+summary(wh_model_ftp_final)
+```
+
+### Effect of FTP at the first layer — by component (brms)
+
+```{r whisper-brms-ftp-first}
+wh_model_ftp_first = brm(
+  formula = logit ~ log_ftp * component + (1 | verb_up),
+  data    = whisper_first_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = wh_brms_path("model_ftp_first")
+)
+summary(wh_model_ftp_first)
+```
+
+### Effect of FTP at the final layer — by component (bam — non-linear)
+
+```{r whisper-bam-ftp-final}
+set.seed(964)
+wh_bam_ftp_final = wh_cache_bam("bam_ftp_final", function() {
+  bam(logit ~ component + s(log_ftp, by = component) + s(verb_up, bs = 're'),
+      data = whisper_final_ftp, method = 'fREML', discrete = TRUE)
+})
+summary(wh_bam_ftp_final)
+```
+
+### Effect of FTP across all layers — by component (mgcv)
+
+```{r whisper-bam-ftp-layer}
+whisper_ftp = whisper_all %>% filter(!is.na(log_ftp))
+
+set.seed(964)
+wh_model_ftp_layer = wh_cache_bam("model_ftp_layer", function() {
+  bam(logit ~ component + te(log_ftp, layer, by = component) + s(verb_up, bs = 're'),
+      data = whisper_ftp, method = 'fREML', discrete = TRUE)
+})
+summary(wh_model_ftp_layer)
+```
+
+### FTP plots — by component
+
+```{r whisper-plot-ftp-layers}
+plot_ftp_by_layer_whisper = function(model_fit, data, title) {
+  layer_seq   = 0:11
+  log_ftp_seq = seq(min(data$log_ftp, na.rm = TRUE), max(data$log_ftp, na.rm = TRUE), length.out = 50)
+  ftp_lo      = quantile(data$log_ftp, 0.1, na.rm = TRUE)
+  ftp_hi      = quantile(data$log_ftp, 0.9, na.rm = TRUE)
+
+  newdata_sp = expand.grid(layer = layer_seq, log_ftp = log_ftp_seq,
+                            component = levels(data$component)) %>%
+    mutate(verb_up = data$verb_up[1])
+  preds_sp = predict(model_fit, newdata = newdata_sp, se.fit = TRUE, exclude = 's(verb_up)')
+  newdata_sp$fit = preds_sp$fit
+  p_sp = newdata_sp %>%
+    ggplot(aes(x = log_ftp, y = fit, color = layer,
+               group = interaction(component, layer))) +
+    geom_line(linewidth = 0.5, alpha = 0.7) + facet_wrap(~component) +
+    scale_color_viridis_c(option = "plasma", name = "Layer") +
+    labs(title = paste0(title, ": FTP effect by layer — encoder vs decoder"),
+         x = "log-odds(FTP)", y = "Predicted logit") + theme_minimal()
+
+  newdata_diff = expand.grid(layer = layer_seq, component = levels(data$component),
+                              ftp_level = c("low", "high")) %>%
+    mutate(log_ftp = ifelse(ftp_level == "low", ftp_lo, ftp_hi),
+           verb_up  = data$verb_up[1])
+  preds_diff = predict(model_fit, newdata = newdata_diff, se.fit = TRUE, exclude = 's(verb_up)')
+  newdata_diff$fit = preds_diff$fit; newdata_diff$se = preds_diff$se.fit
+  p_diff = newdata_diff %>%
+    select(layer, component, ftp_level, fit, se) %>%
+    pivot_wider(names_from = ftp_level, values_from = c(fit, se)) %>%
+    mutate(diff = fit_high - fit_low, se_diff = sqrt(se_high^2 + se_low^2),
+           lo95 = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff) %>%
+    ggplot(aes(x = layer, y = diff, color = component, fill = component)) +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95), alpha = 0.2, color = NA) +
+    geom_line(linewidth = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+    labs(title = paste0(title, ": FTP effect (high − low) across layers"),
+         x = "Layer", y = "Difference in predicted logit (90th − 10th pct FTP)",
+         color = "Component", fill = "Component") + theme_minimal()
+
+  newdata_heat = expand.grid(layer = layer_seq, log_ftp = log_ftp_seq,
+                              component = levels(data$component)) %>%
+    mutate(verb_up = data$verb_up[1])
+  preds_heat = predict(model_fit, newdata = newdata_heat, se.fit = FALSE, exclude = 's(verb_up)')
+  newdata_heat$fit = preds_heat
+  p_heat = newdata_heat %>%
+    ggplot(aes(x = layer, y = log_ftp, fill = fit)) + geom_tile() +
+    facet_wrap(~component) +
+    scale_fill_viridis_c(option = "magma", name = "Predicted\nlogit") +
+    labs(title = paste0(title, ": predicted logit surface"),
+         x = "Layer", y = "log-odds(FTP)") + theme_minimal()
+
+  list(spaghetti = p_sp, diff = p_diff, heatmap = p_heat)
+}
+
+plots_wh_ftp = plot_ftp_by_layer_whisper(wh_model_ftp_layer, whisper_ftp, "Whisper-small")
+plots_wh_ftp$spaghetti
+plots_wh_ftp$diff
+plots_wh_ftp$heatmap
+```
+
+------------------------------------------------------------------------
+
+## Whisper — Joint frequency + predictability
+
+### Additive freq + FTP at the final layer — by component (brms)
+
+```{r whisper-brms-joint}
+wh_model_freq_ftp_final = brm(
+  formula = logit ~ log_freq * component + log_ftp * component + (1 | verb_up),
+  data    = whisper_final_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = wh_brms_path("model_freq_ftp_final")
+)
+summary(wh_model_freq_ftp_final)
+```
+
+### Joint freq × FTP surface at final layer — by component (bam)
+
+```{r whisper-bam-joint}
+set.seed(964)
+wh_bam_joint_final = wh_cache_bam("bam_joint_final", function() {
+  bam(logit ~ component + te(log_freq, log_ftp, by = component) + s(verb_up, bs = 're'),
+      data = whisper_final_ftp, method = 'fREML', discrete = TRUE)
+})
+summary(wh_bam_joint_final)
+```
+
+### Freq and FTP effects across layers — by component (additive bam)
+
+```{r whisper-bam-freq-ftp-layer}
+set.seed(964)
+wh_model_freq_ftp_layer = wh_cache_bam("model_freq_ftp_layer", function() {
+  bam(logit ~ component + te(log_freq, layer, by = component) +
+        te(log_ftp, layer, by = component) + s(verb_up, bs = 're'),
+      data = whisper_ftp, method = 'fREML', discrete = TRUE)
+})
+summary(wh_model_freq_ftp_layer)
+```
+
+### Joint surface plots — final layer
+
+```{r whisper-plot-joint}
+plot_joint_whisper = function(model, data, title) {
+  log_freq_seq = seq(min(data$log_freq, na.rm = TRUE), max(data$log_freq, na.rm = TRUE), length.out = 50)
+  log_ftp_seq  = seq(min(data$log_ftp,  na.rm = TRUE), max(data$log_ftp,  na.rm = TRUE), length.out = 50)
+  newdata = expand.grid(log_freq = log_freq_seq, log_ftp = log_ftp_seq,
+                         component = levels(data$component)) %>%
+    mutate(verb_up = data$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = FALSE, exclude = 's(verb_up)')
+  newdata$fit = preds
+  newdata %>%
+    ggplot(aes(x = log_freq, y = log_ftp, fill = fit)) + geom_tile() +
+    facet_wrap(~component) +
+    scale_fill_viridis_c(option = "magma", name = "Predicted\nlogit") +
+    labs(title = title, x = "log(frequency)", y = "log-odds(FTP)") +
+    theme_minimal()
+}
+
+plot_joint_whisper(wh_bam_joint_final, whisper_final_ftp,
+                   "Whisper-small: joint freq × FTP surface at final layer")
 ```

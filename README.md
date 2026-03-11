@@ -9,7 +9,12 @@ decision logit is used as a proxy for compositionality: high-frequency, idiomati
 types (e.g. *end up*) should look less like standalone "up", while low-frequency,
 transparent types should look more like it. Analyses examine how this signal
 varies as a function of corpus frequency and Forward Transitional Probability
-(FTP = P(up|V)) across layers.
+(FTP = P(up|V)) across layers. The predictability predictor used in all models
+is the **log-odds of FTP**: log(FTP / (1 − FTP)) = log(count(V+up) /
+(count(V) − count(V+up))).
+
+Corpus statistics are matched to each model's training distribution: OLMo and
+Whisper use C4; BabyLM models use the BabyLM training corpus.
 
 **Classifier design**: A separate logistic regression classifier is trained at
 each layer independently. The classifier trained at layer *L* is then applied to
@@ -44,6 +49,7 @@ llm-phrasal-compositionality/
 │   ├── corpus_results_upwords.pkl     # up-within-word sentences (from C4)
 │   ├── olmo_corpus_stats.pkl          # OLMo verb frequencies + FTP (from C4)
 │   ├── babylm_corpus_stats.pkl        # BabyLM verb frequencies + FTP (from BabyLM corpus)
+│   ├── ftp_lookup.csv                 # FTP values for all V+up types (from C4; used by OLMo + Whisper R analysis)
 │   ├── olmo-3-7b/
 │   │   ├── Data_up/                   # OLMo results: standalone-up classifier
 │   │   └── Data_upsubword/            # OLMo results: up-subword classifier
@@ -74,6 +80,39 @@ llm-phrasal-compositionality/
 | BabyLM OPT-350m | `znhoughton/opt-babylm-350m-64eps-seed964` | 24 |
 | BabyLM OPT-1.3b | `znhoughton/opt-babylm-1.3b-64eps-seed964` | 24 |
 | Whisper-small | `openai/whisper-small` | 12 enc + 12 dec |
+
+---
+
+## Corpus statistics and predictor definitions
+
+Each model's frequency and FTP values come from the corpus that best reflects
+its training distribution:
+
+| Model family | Frequency source | FTP source |
+|---|---|---|
+| OLMo-3 7B | C4 (`olmo_corpus_stats.pkl`) | C4 (`ftp_lookup.csv`) |
+| BabyLM OPT-* | BabyLM corpus (`babylm_corpus_stats.pkl`) | BabyLM corpus |
+| Whisper-small | C4 (`corpus_results.pkl`) | C4 (`ftp_lookup.csv`) |
+
+**Frequency** is the raw count of each V+up type in the relevant corpus,
+log-transformed before use: log(count(V+up)).
+
+**Predictability** is the Forward Transitional Probability FTP = P(up | V) =
+count(V+up) / count(V), entered as its log-odds:
+
+```
+log-odds(FTP) = log( count(V+up) / (count(V) − count(V+up)) )
+              = log( FTP / (1 − FTP) )
+```
+
+This measures the odds that "up" follows verb V versus all other continuations
+of V. Only V+up types with a valid (non-null) FTP value are included in the
+analysis, ensuring that the same item set is used for both the frequency and
+predictability models.
+
+The `ftp_lookup.csv` file is generated from `olmo_corpus_stats.pkl` and shared
+between the OLMo and Whisper R analyses. BabyLM reads FTP directly from its
+own result CSVs (populated during pipeline step 1).
 
 ---
 
