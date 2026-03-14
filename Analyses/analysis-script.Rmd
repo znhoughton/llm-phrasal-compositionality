@@ -198,7 +198,7 @@ In R this is computed as `log(ftp / (1 - ftp))` and used as the predictability p
 
 # Item Statistics
 
-All sources use C4 corpus frequency and FTP (from `ftp_lookup.csv`).
+OLMo and Whisper use C4 corpus frequency and FTP (from `ftp_lookup.csv`). BabyLM uses its own training corpus statistics (`babylm_corpus_stats.pkl`), since its models were trained on a qualitatively different, much smaller dataset (~100M words).
 
 ## Build item tables
 
@@ -233,49 +233,62 @@ whisper_items = whisper_all %>%
 ## Summary tables
 
 ```{r item-stats}
-print_item_stats = function(items, label) {
-  cat(sprintf("Source: %s   N items: %d\n", label, nrow(items)))
-  cat(sprintf("Frequency  — min: %d  median: %d  max: %d\n",
-      min(items$frequency), as.integer(median(items$frequency)), max(items$frequency)))
-  cat(sprintf("FTP        — min: %.4f  median: %.4f  max: %.4f\n",
-      min(items$ftp), median(items$ftp), max(items$ftp)))
-  cat(sprintf("log(freq)  — min: %.2f  median: %.2f  max: %.2f\n",
-      min(items$log_freq), median(items$log_freq), max(items$log_freq)))
-  cat(sprintf("log-odds(FTP) — min: %.2f  median: %.2f  max: %.2f\n",
-      min(items$log_ftp), median(items$log_ftp), max(items$log_ftp)))
-  cat("\n")
+make_item_summary = function(items, label) {
+  tibble(
+    Source              = label,
+    `N items`           = nrow(items),
+    `Median freq`       = as.integer(median(items$frequency)),
+    `Freq range`        = sprintf("%d – %d", min(items$frequency), max(items$frequency)),
+    `IQR freq`          = sprintf("%d – %d",
+                            as.integer(quantile(items$frequency, 0.25)),
+                            as.integer(quantile(items$frequency, 0.75))),
+    `Median FTP`        = round(median(items$ftp), 4),
+    `FTP range`         = sprintf("%.4f – %.4f", min(items$ftp), max(items$ftp)),
+    `IQR FTP`           = sprintf("%.4f – %.4f",
+                            quantile(items$ftp, 0.25),
+                            quantile(items$ftp, 0.75)),
+    `Med log(freq)`     = round(median(items$log_freq), 2),
+    `Med logit(FTP)`    = round(median(items$log_ftp),  2),
+    `ρ(log freq, logit FTP)` = round(cor(items$log_freq, items$log_ftp,
+                                          method = "spearman"), 3)
+  )
 }
 
-print_item_stats(olmo_items,    "olmo")
-print_item_stats(blm_items,     "opt-125m (babylm)")
-print_item_stats(whisper_items, "whisper")
+bind_rows(
+  make_item_summary(olmo_items,    "OLMo-3 7B"),
+  make_item_summary(blm_items,     "BabyLM (opt-125m)"),
+  make_item_summary(whisper_items, "Whisper-small")
+) %>%
+  knitr::kable(
+    caption = "Item-level statistics across model families",
+    align   = c("l", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r")
+  )
 ```
 
 ## Top / bottom 5 by frequency and predictability
 
 ```{r item-extremes}
-print_extremes = function(items, label) {
-  cat(sprintf("=== %s: Top 5 most frequent ===\n", label))
-  print(items %>% arrange(desc(frequency)) %>% slice(1:5) %>%
-          select(verb_up, frequency, ftp) %>% as.data.frame())
-
-  cat(sprintf("\n=== %s: Top 5 least frequent ===\n", label))
-  print(items %>% arrange(frequency) %>% slice(1:5) %>%
-          select(verb_up, frequency, ftp) %>% as.data.frame())
-
-  cat(sprintf("\n=== %s: Top 5 most predictable (highest FTP) ===\n", label))
-  print(items %>% arrange(desc(ftp)) %>% slice(1:5) %>%
-          select(verb_up, frequency, ftp) %>% as.data.frame())
-
-  cat(sprintf("\n=== %s: Top 5 least predictable (lowest FTP) ===\n", label))
-  print(items %>% arrange(ftp) %>% slice(1:5) %>%
-          select(verb_up, frequency, ftp) %>% as.data.frame())
-  cat("\n")
+make_extremes_table = function(items, label) {
+  bind_rows(
+    items %>% arrange(desc(frequency)) %>% slice(1:5) %>%
+      mutate(Group = "Most frequent"),
+    items %>% arrange(frequency)       %>% slice(1:5) %>%
+      mutate(Group = "Least frequent"),
+    items %>% arrange(desc(ftp))       %>% slice(1:5) %>%
+      mutate(Group = "Most predictable (highest FTP)"),
+    items %>% arrange(ftp)             %>% slice(1:5) %>%
+      mutate(Group = "Least predictable (lowest FTP)")
+  ) %>%
+    select(Group, `V+up` = verb_up, Frequency = frequency, FTP = ftp) %>%
+    knitr::kable(
+      caption = paste0(label, ": top and bottom 5 items by frequency and predictability"),
+      digits  = 4
+    )
 }
 
-print_extremes(olmo_items,    "OLMo")
-print_extremes(blm_items,     "BabyLM (opt-125m)")
-print_extremes(whisper_items, "Whisper")
+make_extremes_table(olmo_items,    "OLMo-3 7B")
+make_extremes_table(blm_items,     "BabyLM (opt-125m)")
+make_extremes_table(whisper_items, "Whisper-small")
 ```
 
 ## Item distribution plots
@@ -819,14 +832,14 @@ plots_ftp_subword = plot_ftp_by_layer_mgcv(olmo_model_ftp_layer_up_subword,
 
 ```{r olmo-brms-joint}
 olmo_model_freq_ftp_up_independently = brm(
-  formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+  formula = logit ~ log_freq * log_ftp + (1 | verb_up),
   data    = olmo_indep_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
   file    = olmo_brms_path("model_freq_ftp_up_independently")
 )
 olmo_model_freq_ftp_up_subword = brm(
-  formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+  formula = logit ~ log_freq * log_ftp + (1 | verb_up),
   data    = olmo_sub_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -834,6 +847,27 @@ olmo_model_freq_ftp_up_subword = brm(
 )
 summary(olmo_model_freq_ftp_up_independently)
 summary(olmo_model_freq_ftp_up_subword)
+```
+
+### Additive freq + FTP at the first layer (brms)
+
+```{r olmo-brms-joint-first}
+olmo_model_freq_ftp_up_independently_first = brm(
+  formula = logit ~ log_freq * log_ftp + (1 | verb_up),
+  data    = olmo_indep_first_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_freq_ftp_up_independently_first")
+)
+olmo_model_freq_ftp_up_subword_first = brm(
+  formula = logit ~ log_freq * log_ftp + (1 | verb_up),
+  data    = olmo_sub_first_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_freq_ftp_up_subword_first")
+)
+summary(olmo_model_freq_ftp_up_independently_first)
+summary(olmo_model_freq_ftp_up_subword_first)
 ```
 
 ### Joint freq × FTP surface at final layer (bam)
@@ -1211,7 +1245,7 @@ lapply(BLM_TAGS, function(tag) {
 ```{r babylm-brms-joint}
 blm_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+    formula = logit ~ log_freq * log_ftp + (1 | verb_up),
     data    = blm_indep_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1220,7 +1254,7 @@ blm_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag
 })
 blm_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+    formula = logit ~ log_freq * log_ftp + (1 | verb_up),
     data    = blm_sub_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1229,6 +1263,31 @@ blm_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) 
 })
 lapply(blm_joint_indep_final_models, summary)
 lapply(blm_joint_sub_final_models, summary)
+```
+
+### Additive freq + FTP at the first layer — per model (brms)
+
+```{r babylm-brms-joint-first}
+blm_joint_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq * log_ftp + (1 | verb_up),
+    data    = blm_indep_first_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_joint_indep_first_", blm_slug(tag)))
+  )
+})
+blm_joint_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ log_freq * log_ftp + (1 | verb_up),
+    data    = blm_sub_first_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_joint_sub_first_", blm_slug(tag)))
+  )
+})
+lapply(blm_joint_indep_first_models, summary)
+lapply(blm_joint_sub_first_models, summary)
 ```
 
 ### Joint freq × FTP surface at final layer — per model (bam)
@@ -1542,7 +1601,7 @@ lapply(WH_COMPONENTS, function(comp) {
 ```{r whisper-brms-joint}
 wh_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ log_freq + log_ftp + (1 | verb_up),
+    formula = logit ~ log_freq * log_ftp + (1 | verb_up),
     data    = whisper_final_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1550,6 +1609,21 @@ wh_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(
   )
 })
 lapply(wh_joint_final_models, summary)
+```
+
+### Additive freq + FTP at the first layer — per component (brms)
+
+```{r whisper-brms-joint-first}
+wh_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ log_freq * log_ftp + (1 | verb_up),
+    data    = whisper_first_ftp %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_joint_first_", comp))
+  )
+})
+lapply(wh_joint_first_models, summary)
 ```
 
 ### Joint freq × FTP surface at final layer — per component (bam)

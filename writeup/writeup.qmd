@@ -1,0 +1,445 @@
+---
+title: "writeup"
+format: html
+editor: visual
+execute:
+  echo: false
+  message: false
+  warning: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(brms)
+library(mgcv)
+library(tidybayes)
+library(patchwork)
+library(viridis)
+
+# ── Constants & helpers ────────────────────────────────────────────────────────
+OLMO_CACHE_DIR      = "../model_cache/olmo"
+BLM_CACHE_DIR       = "../model_cache/babylm"
+WH_CACHE_DIR        = "../model_cache/whisper"
+
+OLMO_FINAL_LAYER    = 31L
+OLMO_N_LAYERS       = 32L
+BLM_FINAL_LAYER_MAP = list("opt-125m" = 11L, "opt-350m" = 23L, "opt-1.3b" = 23L)
+BLM_N_LAYERS        = c("opt-125m" = 12L, "opt-350m" = 24L, "opt-1.3b" = 24L)
+WH_FINAL_LAYER      = 11L
+WH_N_LAYERS         = 12L
+
+BLM_TAGS      = c("opt-125m", "opt-350m", "opt-1.3b")
+WH_COMPONENTS = c("encoder", "decoder")
+blm_slug      = function(tag) gsub("\\.", "", gsub("opt-", "", tag))
+
+# Load a cached bam/RDS model
+olmo_rds = function(name) readRDS(file.path(OLMO_CACHE_DIR, paste0(name, ".rds")))
+blm_rds  = function(name) readRDS(file.path(BLM_CACHE_DIR,  paste0(name, ".rds")))
+wh_rds   = function(name) readRDS(file.path(WH_CACHE_DIR,   paste0(name, ".rds")))
+
+# brms file= paths (brms appends .rds itself)
+olmo_brms_path = function(name) file.path(OLMO_CACHE_DIR, name)
+blm_brms_path  = function(name) file.path(BLM_CACHE_DIR,  name)
+wh_brms_path   = function(name) file.path(WH_CACHE_DIR,   name)
+
+priors = c(prior(normal(0, 1), class = "b"))
+
+# ── Raw data ───────────────────────────────────────────────────────────────────
+olmo_indep = read_csv("../Data/olmo-3-7b/Data_up/all_layers_results.csv",
+                       show_col_types = FALSE) %>%
+  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)),
+         verb_up = factor(verb_up)) %>%
+  filter(!is.na(ftp), is.finite(log_ftp))
+
+olmo_sub = read_csv("../Data/olmo-3-7b/Data_upsubword/all_layers_results.csv",
+                     show_col_types = FALSE) %>%
+  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)),
+         verb_up = factor(verb_up)) %>%
+  filter(!is.na(ftp), is.finite(log_ftp))
+
+load_babylm_csvs = function(tag) {
+  list(
+    ui = read_csv(paste0("../Data/babylm/", tag, "/Data_up/all_layers_results.csv"),
+                  show_col_types = FALSE) %>%
+      mutate(model = tag, log_freq = log(frequency),
+             log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+      filter(!is.na(ftp), is.finite(log_ftp)),
+    us = read_csv(paste0("../Data/babylm/", tag, "/Data_upsubword/all_layers_results.csv"),
+                  show_col_types = FALSE) %>%
+      mutate(model = tag, log_freq = log(frequency),
+             log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+      filter(!is.na(ftp), is.finite(log_ftp))
+  )
+}
+blm_raw   = setNames(lapply(BLM_TAGS, load_babylm_csvs), BLM_TAGS)
+blm_indep = map_dfr(blm_raw, "ui") %>%
+  mutate(model = factor(model, levels = BLM_TAGS))
+blm_sub   = map_dfr(blm_raw, "us") %>%
+  mutate(model = factor(model, levels = BLM_TAGS))
+
+ftp_lookup = read_csv("../Data/ftp_lookup.csv", show_col_types = FALSE)
+load_whisper_component = function(path, comp) {
+  read_csv(path, show_col_types = FALSE) %>%
+    select(-any_of("ftp")) %>%
+    mutate(component = comp, log_freq = log(frequency),
+           verb_up_chr = as.character(verb_up)) %>%
+    left_join(ftp_lookup, by = c("verb_up_chr" = "verb_up")) %>%
+    filter(!is.na(ftp)) %>%
+    mutate(log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up_chr)) %>%
+    filter(is.finite(log_ftp)) %>% select(-verb_up_chr)
+}
+whisper_all = bind_rows(
+  load_whisper_component("../Data/whisper/encoder/all_layers_results.csv", "encoder"),
+  load_whisper_component("../Data/whisper/decoder/all_layers_results.csv", "decoder")
+) %>% mutate(component = factor(component, levels = c("encoder", "decoder")))
+
+# ── Item statistics ────────────────────────────────────────────────────────────
+olmo_items = olmo_indep %>% filter(layer == 0) %>% group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp), .groups = "drop")
+
+blm_items = blm_indep %>% filter(layer == 0, model == "opt-125m") %>% group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp), .groups = "drop")
+
+whisper_items = whisper_all %>% filter(layer == 0, component == "encoder") %>%
+  group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp), .groups = "drop")
+
+# ── brms: frequency — first & final layer, UP independently & subword ─────────
+# OLMo
+olmo_brms_freq_indep_final = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_up_independently.rds"))
+olmo_brms_freq_indep_first = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_up_independently_first_layer.rds"))
+olmo_brms_freq_sub_final   = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_up_subword.rds"))
+olmo_brms_freq_sub_first   = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_up_subword_first_layer.rds"))
+
+# BabyLM (named lists by tag)
+blm_brms_freq_indep_final = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_freq_indep_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_freq_indep_first = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_freq_indep_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_freq_sub_final   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_freq_sub_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_freq_sub_first   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_freq_sub_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+
+# Whisper (named lists by component)
+wh_brms_freq_final = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_freq_final_", comp, ".rds")))), WH_COMPONENTS)
+wh_brms_freq_first = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_freq_first_", comp, ".rds")))), WH_COMPONENTS)
+
+# ── brms: FTP — first & final layer, UP independently & subword ───────────────
+# OLMo
+olmo_brms_ftp_indep_final = readRDS(file.path(OLMO_CACHE_DIR, "model_ftp_up_independently.rds"))
+olmo_brms_ftp_indep_first = readRDS(file.path(OLMO_CACHE_DIR, "model_ftp_up_independently_first_layer.rds"))
+olmo_brms_ftp_sub_final   = readRDS(file.path(OLMO_CACHE_DIR, "model_ftp_up_subword.rds"))
+olmo_brms_ftp_sub_first   = readRDS(file.path(OLMO_CACHE_DIR, "model_ftp_up_subword_first_layer.rds"))
+
+# BabyLM
+blm_brms_ftp_indep_final = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_ftp_indep_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_ftp_indep_first = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_ftp_indep_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_ftp_sub_final   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_ftp_sub_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_ftp_sub_first   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_ftp_sub_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+
+# Whisper
+wh_brms_ftp_final = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_ftp_final_", comp, ".rds")))), WH_COMPONENTS)
+wh_brms_ftp_first = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_ftp_first_", comp, ".rds")))), WH_COMPONENTS)
+
+# ── brms: joint freq + FTP — final layer ──────────────────────────────────────
+olmo_brms_joint_indep_final = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_independently.rds"))
+olmo_brms_joint_sub_final   = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_subword.rds"))
+
+blm_brms_joint_indep_final = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_indep_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_joint_sub_final   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_sub_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+
+wh_brms_joint_final = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_joint_final_", comp, ".rds")))), WH_COMPONENTS)
+
+# ── brms: joint freq + FTP — first layer ──────────────────────────────────────
+olmo_brms_joint_indep_first = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_independently_first.rds"))
+olmo_brms_joint_sub_first   = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_subword_first.rds"))
+
+blm_brms_joint_indep_first = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_indep_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_joint_sub_first   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_sub_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+
+wh_brms_joint_first = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_joint_first_", comp, ".rds")))), WH_COMPONENTS)
+
+# ── GAM: frequency × layer ────────────────────────────────────────────────────
+olmo_gam_freq_indep = olmo_rds("model_freq_layer_up_independently")
+olmo_gam_freq_sub   = olmo_rds("model_freq_layer_up_subword")
+
+blm_gam_freq_indep = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_freq_layer_indep_", blm_slug(tag)))), BLM_TAGS)
+blm_gam_freq_sub   = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_freq_layer_sub_", blm_slug(tag)))), BLM_TAGS)
+
+wh_gam_freq = setNames(lapply(WH_COMPONENTS, function(comp)
+  wh_rds(paste0("model_freq_layer_", comp))), WH_COMPONENTS)
+
+# ── GAM: FTP × layer ──────────────────────────────────────────────────────────
+olmo_gam_ftp_indep = olmo_rds("model_ftp_layer_up_independently")
+olmo_gam_ftp_sub   = olmo_rds("model_ftp_layer_up_subword")
+
+blm_gam_ftp_indep = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_ftp_layer_indep_", blm_slug(tag)))), BLM_TAGS)
+blm_gam_ftp_sub   = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_ftp_layer_sub_", blm_slug(tag)))), BLM_TAGS)
+
+wh_gam_ftp = setNames(lapply(WH_COMPONENTS, function(comp)
+  wh_rds(paste0("model_ftp_layer_", comp))), WH_COMPONENTS)
+
+# ── brms table helpers ────────────────────────────────────────────────────────
+brms_df = function(model, model_name) {
+  fe   = as.data.frame(fixef(model))
+  post = as_draws_df(model)
+  pgt0 = sapply(rownames(fe), function(p) {
+    col = paste0("b_", p)
+    if (col %in% names(post)) round(mean(post[[col]] > 0) * 100, 1) else NA_real_
+  })
+  fe %>%
+    mutate(Model = model_name, Parameter = rownames(fe), `% > 0` = pgt0) %>%
+    select(Model, Parameter, Estimate, Est.Error, Q2.5, Q97.5, `% > 0`)
+}
+
+brms_combined_table = function(model_list) {
+  bind_rows(mapply(brms_df, model_list, names(model_list), SIMPLIFY = FALSE)) %>%
+    knitr::kable(digits = 3)
+}
+
+# ── Diff plot helper functions ─────────────────────────────────────────────────
+make_freq_diff_plot = function(model, data, n_layers) {
+  layer_seq   = 0:(n_layers - 1)
+  log_freq_lo = quantile(data$log_freq, 0.1)
+  log_freq_hi = quantile(data$log_freq, 0.9)
+  newdata = expand.grid(layer = layer_seq, freq_level = c("low", "high")) %>%
+    mutate(log_freq = ifelse(freq_level == "low", log_freq_lo, log_freq_hi),
+           verb_up  = data$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = TRUE, exclude = "s(verb_up)")
+  newdata %>%
+    mutate(fit = preds$fit, se = preds$se.fit) %>%
+    select(layer, freq_level, fit, se) %>%
+    pivot_wider(names_from = freq_level, values_from = c(fit, se)) %>%
+    mutate(diff  = fit_high - fit_low,
+           se_diff = sqrt(se_high^2 + se_low^2),
+           lo95  = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
+           lo80  = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff) %>%
+    ggplot(aes(x = layer, y = diff)) +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "steelblue", alpha = 0.2) +
+    geom_ribbon(aes(ymin = lo80, ymax = hi80), fill = "steelblue", alpha = 0.3) +
+    geom_line(linewidth = 1, color = "steelblue4") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+    labs(x = "Layer", y = "Δ logit (90th − 10th pct freq)") +
+    theme_minimal()
+}
+
+make_ftp_diff_plot = function(model, data, n_layers) {
+  layer_seq = 0:(n_layers - 1)
+  ftp_lo    = quantile(data$log_ftp, 0.1, na.rm = TRUE)
+  ftp_hi    = quantile(data$log_ftp, 0.9, na.rm = TRUE)
+  newdata = expand.grid(layer = layer_seq, ftp_level = c("low", "high")) %>%
+    mutate(log_ftp = ifelse(ftp_level == "low", ftp_lo, ftp_hi),
+           verb_up = data$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = TRUE, exclude = "s(verb_up)")
+  newdata %>%
+    mutate(fit = preds$fit, se = preds$se.fit) %>%
+    select(layer, ftp_level, fit, se) %>%
+    pivot_wider(names_from = ftp_level, values_from = c(fit, se)) %>%
+    mutate(diff    = fit_high - fit_low,
+           se_diff = sqrt(se_high^2 + se_low^2),
+           lo95    = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
+           lo80    = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff) %>%
+    ggplot(aes(x = layer, y = diff)) +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "darkorange", alpha = 0.2) +
+    geom_ribbon(aes(ymin = lo80, ymax = hi80), fill = "darkorange", alpha = 0.3) +
+    geom_line(linewidth = 1, color = "darkorange4") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+    labs(x = "Layer", y = "Δ logit (90th − 10th pct FTP)") +
+    theme_minimal()
+}
+
+# ── Diff plots: frequency ──────────────────────────────────────────────────────
+# OLMo
+olmo_diff_freq_indep = make_freq_diff_plot(olmo_gam_freq_indep, olmo_indep, OLMO_N_LAYERS)
+olmo_diff_freq_sub   = make_freq_diff_plot(olmo_gam_freq_sub,   olmo_sub,   OLMO_N_LAYERS)
+
+# BabyLM (named lists)
+blm_diff_freq_indep = setNames(lapply(BLM_TAGS, function(tag)
+  make_freq_diff_plot(blm_gam_freq_indep[[tag]], blm_indep %>% filter(model == tag),
+                      BLM_N_LAYERS[[tag]])), BLM_TAGS)
+blm_diff_freq_sub   = setNames(lapply(BLM_TAGS, function(tag)
+  make_freq_diff_plot(blm_gam_freq_sub[[tag]], blm_sub %>% filter(model == tag),
+                      BLM_N_LAYERS[[tag]])), BLM_TAGS)
+
+# Whisper (named lists by component)
+wh_diff_freq = setNames(lapply(WH_COMPONENTS, function(comp)
+  make_freq_diff_plot(wh_gam_freq[[comp]], whisper_all %>% filter(component == comp),
+                      WH_N_LAYERS)), WH_COMPONENTS)
+
+# ── Diff plots: FTP ────────────────────────────────────────────────────────────
+# OLMo
+olmo_diff_ftp_indep = make_ftp_diff_plot(olmo_gam_ftp_indep, olmo_indep, OLMO_N_LAYERS)
+olmo_diff_ftp_sub   = make_ftp_diff_plot(olmo_gam_ftp_sub,   olmo_sub,   OLMO_N_LAYERS)
+
+# BabyLM
+blm_diff_ftp_indep = setNames(lapply(BLM_TAGS, function(tag)
+  make_ftp_diff_plot(blm_gam_ftp_indep[[tag]], blm_indep %>% filter(model == tag),
+                     BLM_N_LAYERS[[tag]])), BLM_TAGS)
+blm_diff_ftp_sub   = setNames(lapply(BLM_TAGS, function(tag)
+  make_ftp_diff_plot(blm_gam_ftp_sub[[tag]], blm_sub %>% filter(model == tag),
+                     BLM_N_LAYERS[[tag]])), BLM_TAGS)
+
+# Whisper
+wh_diff_ftp = setNames(lapply(WH_COMPONENTS, function(comp)
+  make_ftp_diff_plot(wh_gam_ftp[[comp]], whisper_all %>% filter(component == comp),
+                     WH_N_LAYERS)), WH_COMPONENTS)
+```
+
+
+
+# Experiment 1: UP Independently
+
+## Joint model — first layer
+
+```{r}
+#| label: tbl-exp1-joint-first
+#| tbl-cap: "Joint frequency × FTP model at the first layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+brms_combined_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_indep_first,
+  "BabyLM 125M" = blm_brms_joint_indep_first[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_indep_first[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_indep_first[["opt-1.3b"]]
+))
+```
+
+## Joint model — final layer
+
+```{r}
+#| label: tbl-exp1-joint-final
+#| tbl-cap: "Joint frequency × FTP model at the final layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+brms_combined_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_indep_final,
+  "BabyLM 125M" = blm_brms_joint_indep_final[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_indep_final[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_indep_final[["opt-1.3b"]]
+))
+```
+
+## Frequency effect across layers
+
+```{r}
+#| label: fig-exp1-freq
+#| fig-cap: "Estimated frequency effect (difference in predicted logit between the 90th and 10th percentile of log frequency) across layers for UP independently. Ribbons show 80% and 95% credible intervals."
+(olmo_diff_freq_indep | blm_diff_freq_indep[["opt-125m"]]) /
+(blm_diff_freq_indep[["opt-350m"]] | blm_diff_freq_indep[["opt-1.3b"]])
+```
+
+## FTP effect across layers
+
+```{r}
+#| label: fig-exp1-ftp
+#| fig-cap: "Estimated FTP effect (difference in predicted logit between the 90th and 10th percentile of log-odds FTP) across layers for UP independently. Ribbons show 80% and 95% credible intervals."
+(olmo_diff_ftp_indep | blm_diff_ftp_indep[["opt-125m"]]) /
+(blm_diff_ftp_indep[["opt-350m"]] | blm_diff_ftp_indep[["opt-1.3b"]])
+```
+
+# Experiment 2: UP as Subword
+
+## Joint model — first layer
+
+```{r}
+#| label: tbl-exp2-joint-first
+#| tbl-cap: "Joint frequency × FTP model at the first layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+brms_combined_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_sub_first,
+  "BabyLM 125M" = blm_brms_joint_sub_first[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_sub_first[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_sub_first[["opt-1.3b"]]
+))
+```
+
+## Joint model — final layer
+
+```{r}
+#| label: tbl-exp2-joint-final
+#| tbl-cap: "Joint frequency × FTP model at the final layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+brms_combined_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_sub_final,
+  "BabyLM 125M" = blm_brms_joint_sub_final[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_sub_final[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_sub_final[["opt-1.3b"]]
+))
+```
+
+## Frequency effect across layers
+
+```{r}
+#| label: fig-exp2-freq
+#| fig-cap: "Estimated frequency effect (difference in predicted logit between the 90th and 10th percentile of log frequency) across layers for UP as subword. Ribbons show 80% and 95% credible intervals."
+(olmo_diff_freq_sub | blm_diff_freq_sub[["opt-125m"]]) /
+(blm_diff_freq_sub[["opt-350m"]] | blm_diff_freq_sub[["opt-1.3b"]])
+```
+
+## FTP effect across layers
+
+```{r}
+#| label: fig-exp2-ftp
+#| fig-cap: "Estimated FTP effect (difference in predicted logit between the 90th and 10th percentile of log-odds FTP) across layers for UP as subword. Ribbons show 80% and 95% credible intervals."
+(olmo_diff_ftp_sub | blm_diff_ftp_sub[["opt-125m"]]) /
+(blm_diff_ftp_sub[["opt-350m"]] | blm_diff_ftp_sub[["opt-1.3b"]])
+```
+
+# Experiment 3: Whisper (ASR Model)
+
+## Joint model — first layer
+
+```{r}
+#| label: tbl-exp3-joint-first
+#| tbl-cap: "Joint frequency × FTP model at the first layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+brms_combined_table(list(
+  "Encoder" = wh_brms_joint_first[["encoder"]],
+  "Decoder" = wh_brms_joint_first[["decoder"]]
+))
+```
+
+## Joint model — final layer
+
+```{r}
+#| label: tbl-exp3-joint-final
+#| tbl-cap: "Joint frequency × FTP model at the final layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+brms_combined_table(list(
+  "Encoder" = wh_brms_joint_final[["encoder"]],
+  "Decoder" = wh_brms_joint_final[["decoder"]]
+))
+```
+
+## Frequency effect across layers
+
+```{r}
+#| label: fig-exp3-freq
+#| fig-cap: "Estimated frequency effect across layers for Whisper encoder and decoder. Ribbons show 80% and 95% credible intervals."
+wh_diff_freq[["encoder"]] | wh_diff_freq[["decoder"]]
+```
+
+## FTP effect across layers
+
+```{r}
+#| label: fig-exp3-ftp
+#| fig-cap: "Estimated FTP effect across layers for Whisper encoder and decoder. Ribbons show 80% and 95% credible intervals."
+wh_diff_ftp[["encoder"]] | wh_diff_ftp[["decoder"]]
+```
