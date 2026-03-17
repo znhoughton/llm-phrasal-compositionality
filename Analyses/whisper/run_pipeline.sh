@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-DATA_DIR="../../Data/whisper_audio"
+DATA_DIR="../../Data/whisper"
 METADATA="../../Data/up-audio-metadata.csv"
 VUP_PKL="../../Data/corpus_results.pkl"
 MODEL="openai/whisper-small"

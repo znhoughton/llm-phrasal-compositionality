@@ -73,5 +73,5 @@ for TAG in "${TAGS[@]}"; do
 done
 
 echo "========================================"
-echo " All models done. Open Analyses/babylm/analysis-script.Rmd to run the R analysis."
+echo " All models done. Open Analyses/analysis-script.Rmd to run the R analysis."
 echo "========================================"
