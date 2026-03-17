@@ -50,5 +50,5 @@ python subwords_containing_up.py \
 
 echo ""
 echo "========================================"
-echo " Done. Open Analyses/olmo-3-7b/analysis-script.Rmd to run the R analysis."
+echo " Done. Open Analyses/analysis-script.Rmd to run the R analysis."
 echo "========================================"
