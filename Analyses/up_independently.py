@@ -1,24 +1,26 @@
 """
 V+up Layer-by-Layer Analysis — standalone "up" classifier
 ===========================================================
-Trains a logistic regression classifier layer-by-layer on OLMo-3 7B hidden
-states to distinguish standalone "up" particles from random other tokens.
+Trains a logistic regression classifier layer-by-layer on a transformer
+model's hidden states to distinguish standalone "up" particles from random
+other tokens.
 
   Positive (label=1): standalone "up" token embeddings
   Negative (label=0): random other token from the same sentences
 
-Reads pre-built datasets from DATA_DIR (produced by build_datasets.py):
+Reads pre-built datasets from DATA_DIR (produced by create_train_val_test.py):
     train.csv, val.csv, test.csv
 
 Per-layer outputs saved to DATA_DIR:
     layer_XX.csv, layer_XX_plot.png, all_layers_results.csv, layer_metadata.json
 
 Usage:
-    python vup_layer_analysis.py
+    python up_independently.py [--model MODEL] [--data-dir DIR] [--vup-pkl PATH]
 
-Requires build_datasets.py to have been run first.
+Requires create_train_val_test.py to have been run first.
 """
 
+import argparse
 import json
 import os
 import pickle
@@ -37,16 +39,12 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
-# CONFIG
+# CONFIG (defaults; all overridable via CLI — see --help)
 # ---------------------------------------------------------------------------
-MODEL_NAME   = "allenai/Olmo-3-1025-7B"
-BATCH_SIZE   = 50
-RANDOM_SEED  = 964
-MAX_SEQ_LEN  = 128
-LOAD_IN_8BIT = False
-DATA_DIR     = "../Data/Data_up"
-VUP_PKL_PATH = "../Data/corpus_results.pkl"
-
+BATCH_SIZE      = 50
+RANDOM_SEED     = 964
+MAX_SEQ_LEN     = 128
+LOAD_IN_8BIT    = False
 N_TRAIN         = 1000
 N_VAL           = 1000
 N_TEST_PER_TYPE = 20
@@ -55,6 +53,36 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("datasets").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Layer-by-layer standalone-up classifier."
+    )
+    parser.add_argument(
+        "--model",
+        default="allenai/Olmo-3-1025-7B",
+        help="HuggingFace model ID. Default: allenai/Olmo-3-1025-7B",
+    )
+    parser.add_argument(
+        "--data-dir",
+        default="../Data/olmo-3-7b/Data_up",
+        help="Directory containing train/val/test CSVs and where layer outputs "
+             "will be saved. Default: ../Data/olmo-3-7b/Data_up",
+    )
+    parser.add_argument(
+        "--vup-pkl",
+        default="../Data/corpus_results.pkl",
+        help="Path to corpus_results.pkl (produced by create_dataset.py). "
+             "Default: ../Data/corpus_results.pkl",
+    )
+    return parser.parse_args()
+
+
+args         = parse_args()
+MODEL_NAME   = args.model
+DATA_DIR     = args.data_dir
+VUP_PKL_PATH = args.vup_pkl
 
 random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
@@ -144,7 +172,18 @@ def load_datasets():
         ))
         vup_sentences_filtered[vup_type] = group["sentence"].tolist()
 
-    return train_records, val_records, vup_positions, vup_sentences_filtered
+    vup_ftp = {}
+    if "ftp" in test_df.columns:
+        vup_ftp = (
+            test_df.drop_duplicates("verb_up")
+            .set_index("verb_up")["ftp"]
+            .to_dict()
+        )
+        log.info("  FTP loaded for %d V+up types.", len(vup_ftp))
+    else:
+        log.info("  No 'ftp' column in test.csv — FTP will be NaN in outputs.")
+
+    return train_records, val_records, vup_positions, vup_sentences_filtered, vup_ftp
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +354,7 @@ def train_classifier(X_train, y_train, X_val, y_val):
 # EVALUATION
 # ---------------------------------------------------------------------------
 
-def evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, layer_idx):
+def evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_ftp, layer_idx):
     rows = []
     for vup_type, embs in vup_embeddings.items():
         X_scaled = scaler.transform(embs)
@@ -323,12 +362,14 @@ def evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, layer_idx
         probs    = clf.predict_proba(X_scaled)[:, 1]
         logits   = clf.decision_function(X_scaled)
         sents    = [sent for sent, _, _ in vup_positions[vup_type]]
+        ftp_val  = vup_ftp.get(vup_type, float("nan"))
 
         for j, (pred, prob, logit) in enumerate(zip(preds, probs, logits)):
             rows.append({
                 "layer":           layer_idx,
                 "verb_up":         vup_type,
                 "frequency":       vup_freq[vup_type],
+                "ftp":             ftp_val,
                 "sentence":        sents[j] if j < len(sents) else "",
                 "classifier_pred": int(pred),
                 "up_probability":  round(float(prob), 4),
@@ -444,7 +485,7 @@ def main():
     n_layers = model.config.num_hidden_layers
     log.info("Will iterate over %d transformer layers (0 to %d)", n_layers, n_layers - 1)
 
-    train_records, val_records, vup_positions, vup_sentences_filtered = load_datasets()
+    train_records, val_records, vup_positions, vup_sentences_filtered, vup_ftp = load_datasets()
 
     with open(VUP_PKL_PATH, "rb") as f:
         _, vup_freq, _, _ = pickle.load(f)
@@ -487,7 +528,7 @@ def main():
             vup_positions, model, tokenizer, layer_idx
         )
 
-        layer_df = evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, layer_idx)
+        layer_df = evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_ftp, layer_idx)
 
         csv_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}.csv")
         layer_df.to_csv(csv_path, index=False)

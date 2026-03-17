@@ -6,3 +6,11 @@
 *.rds !text !filter !merge !diff
 /Data/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
 /Data/Data_upsubword/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/babylm/opt-1.3b/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/babylm/opt-1.3b/Data_upsubword/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/babylm/opt-125m/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/babylm/opt-125m/Data_upsubword/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/babylm/opt-350m/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/babylm/opt-350m/Data_upsubword/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/olmo-3-7b/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
+/Data/olmo-3-7b/Data_upsubword/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
