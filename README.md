@@ -73,9 +73,9 @@ llm-phrasal-compositionality/
 │   │   ├── opt-125m/{Data_up,Data_upsubword}/
 │   │   ├── opt-350m/{Data_up,Data_upsubword}/
 │   │   └── opt-1.3b/{Data_up,Data_upsubword}/
-│   └── whisper_audio/
+│   └── whisper/
 │       ├── dataset.csv                # segment metadata + WhisperX timestamps
-│       ├── audio/<sid>.wav            # 16kHz extracted segment clips
+│       ├── audio/<sid>.wav            # 16kHz extracted segment clips (gitignored)
 │       ├── encoder/                   # layer_XX.csv, all_layers_results.csv, layer_metadata.json
 │       └── decoder/                   # same structure as encoder/
 ├── model_cache/                       # Cached brms/bam .rds files — gitignored
@@ -339,8 +339,8 @@ on the full transcript.
 ```bash
 cd Analyses/whisper/
 python build_audio_dataset.py
-# → ../../Data/whisper_audio/dataset.csv
-# → ../../Data/whisper_audio/audio/<sid>.wav
+# → ../../Data/whisper/dataset.csv
+# → ../../Data/whisper/audio/<sid>.wav
 ```
 
 Prints a data-sufficiency summary at the end (target: ≥2,000 *word_up*
@@ -362,8 +362,8 @@ Or run the classifier directly:
 ```bash
 python run_whisper_classifier.py \
   --vup-pkl ../../Data/corpus_results.pkl   # uses C4 frequencies for the frequency column
-# → ../../Data/whisper_audio/encoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
-# → ../../Data/whisper_audio/decoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
+# → ../../Data/whisper/encoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
+# → ../../Data/whisper/decoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
 ```
 
 > Requires `Data/corpus_results.pkl` (produced by `create_dataset.py` in the OLMo pipeline).
@@ -381,6 +381,75 @@ are cached in `model_cache/whisper/`. Covers:
 - Validation accuracy per layer per component
 - Spearman correlation between log(frequency) and mean logit across layers
 - Most/least compositional V+up types at the final layer
+
+---
+
+## Dataset statistics
+
+### Train / validation splits (Experiment 1 — UP independently)
+
+| Model | Train pos | Train neg | Val pos | Val neg |
+|---|---|---|---|---|
+| OLMo-3 7B | 1,000 standalone *up* | 1,000 other tokens | 992 | 1,000 |
+| BabyLM 125M | 1,000 | 1,000 | 999 | 1,000 |
+| BabyLM 350M | 1,000 | 1,000 | 999 | 1,000 |
+| BabyLM 1.3B | 1,000 | 1,000 | 916 | 1,000 |
+
+Val sizes < 1,000 for some models reflect sentences where the tokenizer could not
+resolve a valid *up* token position.
+
+### Train / validation splits (Experiment 2 — UP as subword)
+
+| Model | Train pos (standalone) | Train pos (subword, unique types) | Train neg | Val rows |
+|---|---|---|---|---|
+| OLMo-3 7B | 1,000 | 1,000 | 2,000 | 3,868 |
+| BabyLM 125M | 1,000 | 1,000 | 2,000 | 3,582 |
+| BabyLM 350M | 1,000 | 1,000 | 2,000 | 3,582 |
+| BabyLM 1.3B | 1,000 | 1,000 | 2,000 | 3,773 |
+
+Subword positives are restricted to **one sentence per unique up-containing word
+type** (e.g., *setup*, *update*, *upon*), so the classifier generalises across
+types rather than memorising frequent forms.
+
+### Test sets (Experiments 1 & 2 — text models)
+
+The test set is shared across both experiments. OLMo-3 7B and BabyLM models use
+the same underlying V+up sentences; only the tokenization and corpus statistics
+differ.
+
+| Model | Test sentences | Unique V+up types | Types w/ valid FTP | Sents/type (median) |
+|---|---|---|---|---|
+| OLMo-3 7B | 81,586 | 4,082 | 3,927 | 20 |
+| BabyLM 125M | 81,543 | 4,082 | 1,039 | 20 |
+| BabyLM 350M | 81,543 | 4,082 | 1,039 | 20 |
+| BabyLM 1.3B | 80,425 | 4,081 | 1,039 | 20 |
+
+BabyLM has fewer types with a valid FTP because the BabyLM training corpus
+(~100M words) is much smaller than C4, so many low-frequency V+up types have no
+BabyLM verb-frequency entry.
+
+**Item-level frequency and FTP (unique V+up types with valid FTP):**
+
+| Model | N items | Median freq | Freq range | Median FTP | FTP range | Med logit(FTP) |
+|---|---|---|---|---|---|---|
+| OLMo-3 7B (C4) | 3,927 | 92 | 20 – 390,086 | 0.0046 | 0.00003 – 0.980 | −5.38 |
+| BabyLM (BabyLM corpus) | 1,039 | 920 | 20 – 390,086 | 0.0325 | 0.00003 – 0.880 | −3.38 |
+
+### Whisper audio dataset (Experiment 3)
+
+| | Count |
+|---|---|
+| Total segments in `up-audio-metadata.csv` processed | 224,118 |
+| Classified as *word_up* (non-V+up; used for train/val) | 58,751 |
+| Classified as *V+up* (test pool) | 165,367 |
+| Unique V+up types in audio | 4,161 |
+| Qualifying types for test (≥5 occurrences) | 1,466 |
+| Train positives (*word_up*) | 1,000 |
+| Val positives (*word_up*) | 1,000 |
+| Sentences per qualifying type (median / range) | 16 / 5–20 |
+
+FTP and C4 frequency for the 1,466 qualifying test types are joined from
+`ftp_lookup.csv` in the R analysis.
 
 ---
 
