@@ -874,6 +874,48 @@ summary(olmo_model_freq_ftp_up_independently_first)
 summary(olmo_model_freq_ftp_up_subword_first)
 ```
 
+### Polynomial freq² + FTP² joint at the final layer (brms)
+
+```{r olmo-brms-poly-joint-final}
+olmo_model_poly_joint_indep_final = brm(
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  data    = olmo_indep_final_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_poly_joint_indep_final")
+)
+olmo_model_poly_joint_sub_final = brm(
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  data    = olmo_sub_final_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_poly_joint_sub_final")
+)
+summary(olmo_model_poly_joint_indep_final)
+summary(olmo_model_poly_joint_sub_final)
+```
+
+### Polynomial freq² + FTP² joint at the first layer (brms)
+
+```{r olmo-brms-poly-joint-first}
+olmo_model_poly_joint_indep_first = brm(
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  data    = olmo_indep_first_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_poly_joint_indep_first")
+)
+olmo_model_poly_joint_sub_first = brm(
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  data    = olmo_sub_first_ftp,
+  prior   = priors,
+  iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+  file    = olmo_brms_path("model_poly_joint_sub_first")
+)
+summary(olmo_model_poly_joint_indep_first)
+summary(olmo_model_poly_joint_sub_first)
+```
+
 ### Joint freq × FTP surface at final layer (bam)
 
 ```{r olmo-bam-joint}
@@ -1302,6 +1344,56 @@ lapply(blm_joint_indep_first_models, summary)
 lapply(blm_joint_sub_first_models, summary)
 ```
 
+### Polynomial freq² + FTP² joint at the final layer — per model (brms)
+
+```{r babylm-brms-poly-joint-final}
+blm_poly_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    data    = blm_indep_final_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_poly_joint_indep_final_", blm_slug(tag)))
+  )
+})
+blm_poly_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    data    = blm_sub_final_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_poly_joint_sub_final_", blm_slug(tag)))
+  )
+})
+lapply(blm_poly_joint_indep_final_models, summary)
+lapply(blm_poly_joint_sub_final_models, summary)
+```
+
+### Polynomial freq² + FTP² joint at the first layer — per model (brms)
+
+```{r babylm-brms-poly-joint-first}
+blm_poly_joint_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    data    = blm_indep_first_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_poly_joint_indep_first_", blm_slug(tag)))
+  )
+})
+blm_poly_joint_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  brm(
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    data    = blm_sub_first_ftp %>% filter(model == tag),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = blm_brms_path(paste0("model_poly_joint_sub_first_", blm_slug(tag)))
+  )
+})
+lapply(blm_poly_joint_indep_first_models, summary)
+lapply(blm_poly_joint_sub_first_models, summary)
+```
+
 ### Joint freq × FTP surface at final layer — per model (bam)
 
 ```{r babylm-bam-joint}
@@ -1640,6 +1732,36 @@ wh_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(
   )
 })
 lapply(wh_joint_first_models, summary)
+```
+
+### Polynomial freq² + FTP² joint at the final layer — per component (brms)
+
+```{r whisper-brms-poly-joint-final}
+wh_poly_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    data    = whisper_final_ftp %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_poly_joint_final_", comp))
+  )
+})
+lapply(wh_poly_joint_final_models, summary)
+```
+
+### Polynomial freq² + FTP² joint at the first layer — per component (brms)
+
+```{r whisper-brms-poly-joint-first}
+wh_poly_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    data    = whisper_first_ftp %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_poly_joint_first_", comp))
+  )
+})
+lapply(wh_poly_joint_first_models, summary)
 ```
 
 ### Joint freq × FTP surface at final layer — per component (bam)
