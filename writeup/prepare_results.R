@@ -1,0 +1,524 @@
+# prepare_results.R
+# Pre-computes all data needed for writeup.qmd and saves to writeup/results/.
+# Run this once (or after re-fitting models) before rendering the writeup.
+#
+# Can be run from any directory — it locates itself automatically.
+
+library(tidyverse)
+library(brms)
+library(mgcv)
+library(tidybayes)
+library(jsonlite)
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+# Paths are relative to the project root (llm-phrasal-compositionality/).
+OLMO_CACHE_DIR      = "model_cache/olmo"
+BLM_CACHE_DIR       = "model_cache/babylm"
+WH_CACHE_DIR        = "model_cache/whisper"
+RESULTS_DIR         = "writeup/results"
+dir.create(RESULTS_DIR, showWarnings = FALSE, recursive = TRUE)
+
+OLMO_FINAL_LAYER    = 31L
+OLMO_N_LAYERS       = 32L
+BLM_FINAL_LAYER_MAP = list("opt-125m" = 11L, "opt-350m" = 23L, "opt-1.3b" = 23L)
+BLM_N_LAYERS        = c("opt-125m" = 12L, "opt-350m" = 24L, "opt-1.3b" = 24L)
+WH_FINAL_LAYER      = 11L
+WH_N_LAYERS         = 12L
+
+BLM_TAGS      = c("opt-125m", "opt-350m", "opt-1.3b")
+WH_COMPONENTS = c("encoder", "decoder")
+blm_slug      = function(tag) gsub("\\.", "", gsub("opt-", "", tag))
+BLM_LABELS    = c("opt-125m" = "BabyLM 125M", "opt-350m" = "BabyLM 350M", "opt-1.3b" = "BabyLM 1.3B")
+WH_LABELS     = c("encoder"  = "Encoder",      "decoder"  = "Decoder")
+
+olmo_rds = function(name) readRDS(file.path(OLMO_CACHE_DIR, paste0(name, ".rds")))
+blm_rds  = function(name) readRDS(file.path(BLM_CACHE_DIR,  paste0(name, ".rds")))
+wh_rds   = function(name) readRDS(file.path(WH_CACHE_DIR,   paste0(name, ".rds")))
+
+# ── 1. Raw data ────────────────────────────────────────────────────────────────
+message("Loading raw data...")
+
+olmo_indep = read_csv("Data/olmo-3-7b/Data_up/all_layers_results.csv",
+                      show_col_types = FALSE) %>%
+  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)),
+         verb_up = factor(verb_up)) %>%
+  filter(!is.na(ftp), is.finite(log_ftp))
+
+olmo_sub = read_csv("Data/olmo-3-7b/Data_upsubword/all_layers_results.csv",
+                    show_col_types = FALSE) %>%
+  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)),
+         verb_up = factor(verb_up)) %>%
+  filter(!is.na(ftp), is.finite(log_ftp))
+
+load_babylm_csvs = function(tag) {
+  list(
+    ui = read_csv(paste0("Data/babylm/", tag, "/Data_up/all_layers_results.csv"),
+                  show_col_types = FALSE) %>%
+      mutate(model = tag, log_freq = log(frequency),
+             log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+      filter(!is.na(ftp), is.finite(log_ftp)),
+    us = read_csv(paste0("Data/babylm/", tag, "/Data_upsubword/all_layers_results.csv"),
+                  show_col_types = FALSE) %>%
+      mutate(model = tag, log_freq = log(frequency),
+             log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
+      filter(!is.na(ftp), is.finite(log_ftp))
+  )
+}
+blm_raw   = setNames(lapply(BLM_TAGS, load_babylm_csvs), BLM_TAGS)
+blm_indep = map_dfr(blm_raw, "ui") %>% mutate(model = factor(model, levels = BLM_TAGS))
+blm_sub   = map_dfr(blm_raw, "us") %>% mutate(model = factor(model, levels = BLM_TAGS))
+
+ftp_lookup = read_csv("Data/ftp_lookup.csv", show_col_types = FALSE)
+load_whisper_component = function(path, comp) {
+  read_csv(path, show_col_types = FALSE) %>%
+    select(-any_of("ftp")) %>%
+    mutate(component = comp, log_freq = log(frequency),
+           verb_up_chr = as.character(verb_up)) %>%
+    left_join(ftp_lookup, by = c("verb_up_chr" = "verb_up")) %>%
+    filter(!is.na(ftp)) %>%
+    mutate(log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up_chr)) %>%
+    filter(is.finite(log_ftp)) %>% select(-verb_up_chr)
+}
+whisper_all = bind_rows(
+  load_whisper_component("Data/whisper/encoder/all_layers_results.csv", "encoder"),
+  load_whisper_component("Data/whisper/decoder/all_layers_results.csv", "decoder")
+) %>% mutate(component = factor(component, levels = c("encoder", "decoder")))
+
+# ── 2. FTP-filtered subsets ────────────────────────────────────────────────────
+blm_final_layer_lut = tibble(model = names(BLM_FINAL_LAYER_MAP),
+                              final_layer = unlist(BLM_FINAL_LAYER_MAP))
+
+olmo_indep_final_ftp = olmo_indep %>% filter(layer == OLMO_FINAL_LAYER, !is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
+olmo_indep_first_ftp = olmo_indep %>% filter(layer == 0, !is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
+olmo_sub_final_ftp   = olmo_sub %>% filter(layer == OLMO_FINAL_LAYER, !is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
+olmo_sub_first_ftp   = olmo_sub %>% filter(layer == 0, !is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
+
+blm_indep_final_ftp = blm_indep %>% filter(!is.na(log_ftp)) %>%
+  left_join(blm_final_layer_lut, by = "model") %>%
+  filter(layer == final_layer) %>% select(-final_layer) %>%
+  group_by(model) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
+blm_indep_first_ftp = blm_indep %>% filter(layer == 0, !is.na(log_ftp)) %>%
+  group_by(model) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
+blm_sub_final_ftp = blm_sub %>% filter(!is.na(log_ftp)) %>%
+  left_join(blm_final_layer_lut, by = "model") %>%
+  filter(layer == final_layer) %>% select(-final_layer) %>%
+  group_by(model) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
+blm_sub_first_ftp = blm_sub %>% filter(layer == 0, !is.na(log_ftp)) %>%
+  group_by(model) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
+
+whisper_final_ftp = whisper_all %>% filter(layer == WH_FINAL_LAYER, !is.na(log_ftp)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
+whisper_first_ftp = whisper_all %>% filter(layer == 0, !is.na(log_ftp)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
+
+# ── 3. Items tables ────────────────────────────────────────────────────────────
+message("Saving items tables...")
+
+olmo_indep %>% filter(layer == 0) %>% group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp), .groups = "drop") %>%
+  write_csv(file.path(RESULTS_DIR, "olmo_items.csv"))
+
+blm_indep %>% filter(layer == 0, model == "opt-125m") %>% group_by(verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp), .groups = "drop") %>%
+  write_csv(file.path(RESULTS_DIR, "blm_items.csv"))
+
+whisper_all %>% filter(layer == 0) %>%
+  group_by(component, verb_up) %>%
+  summarise(frequency = first(frequency), ftp = first(ftp),
+            log_freq = first(log_freq), log_ftp = first(log_ftp), .groups = "drop") %>%
+  write_csv(file.path(RESULTS_DIR, "whisper_items_by_component.csv"))
+
+# ── 4. Whisper splits table ────────────────────────────────────────────────────
+message("Saving Whisper splits table...")
+
+wh_layer_meta = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  meta = fromJSON(file.path("Data/whisper", comp, "layer_metadata.json"))
+  meta$layers[meta$layers$layer == 0, ]
+})
+wh_test_counts = whisper_all %>%
+  filter(layer == 0) %>%
+  group_by(component) %>%
+  summarise(test_sentences = n(), test_types = n_distinct(verb_up),
+            items_w_ftp = n_distinct(verb_up[!is.na(ftp)]), .groups = "drop")
+
+tibble(component = WH_COMPONENTS, Component = c("Encoder", "Decoder")) %>%
+  rowwise() %>%
+  mutate(
+    `Train pos` = wh_layer_meta[[component]]$train_n_positive,
+    `Train neg` = wh_layer_meta[[component]]$train_n_negative,
+    `Val pos`   = wh_layer_meta[[component]]$val_n_positive,
+    `Val neg`   = wh_layer_meta[[component]]$val_n_negative
+  ) %>%
+  ungroup() %>%
+  left_join(wh_test_counts %>% mutate(Component = str_to_title(component)), by = "Component") %>%
+  select(Component, `Train pos`, `Train neg`, `Val pos`, `Val neg`,
+         `Test sentences` = test_sentences, `Test types` = test_types,
+         `Items w/ FTP` = items_w_ftp) %>%
+  write_csv(file.path(RESULTS_DIR, "wh_splits.csv"))
+
+# ── 5. GAM diff data ───────────────────────────────────────────────────────────
+message("Loading GAMs and computing diff data...")
+
+freq_diff_data = function(model, data, n_layers, panel) {
+  layer_seq   = 0:(n_layers - 1)
+  log_freq_lo = quantile(data$log_freq, 0.1)
+  log_freq_hi = quantile(data$log_freq, 0.9)
+  newdata = expand.grid(layer = layer_seq, freq_level = c("low", "high")) %>%
+    mutate(log_freq = ifelse(freq_level == "low", log_freq_lo, log_freq_hi),
+           verb_up  = data$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = TRUE, exclude = "s(verb_up)")
+  newdata %>%
+    mutate(fit = preds$fit, se = preds$se.fit) %>%
+    select(layer, freq_level, fit, se) %>%
+    pivot_wider(names_from = freq_level, values_from = c(fit, se)) %>%
+    mutate(diff    = fit_high - fit_low,
+           se_diff = sqrt(se_high^2 + se_low^2),
+           lo95    = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
+           lo80    = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff,
+           panel   = panel)
+}
+
+ftp_diff_data = function(model, data, n_layers, panel) {
+  layer_seq = 0:(n_layers - 1)
+  ftp_lo    = quantile(data$log_ftp, 0.1, na.rm = TRUE)
+  ftp_hi    = quantile(data$log_ftp, 0.9, na.rm = TRUE)
+  newdata = expand.grid(layer = layer_seq, ftp_level = c("low", "high")) %>%
+    mutate(log_ftp = ifelse(ftp_level == "low", ftp_lo, ftp_hi),
+           verb_up = data$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = TRUE, exclude = "s(verb_up)")
+  newdata %>%
+    mutate(fit = preds$fit, se = preds$se.fit) %>%
+    select(layer, ftp_level, fit, se) %>%
+    pivot_wider(names_from = ftp_level, values_from = c(fit, se)) %>%
+    mutate(diff    = fit_high - fit_low,
+           se_diff = sqrt(se_high^2 + se_low^2),
+           lo95    = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
+           lo80    = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff,
+           panel   = panel)
+}
+
+olmo_gam_freq_indep = olmo_rds("model_freq_layer_up_independently")
+olmo_gam_freq_sub   = olmo_rds("model_freq_layer_up_subword")
+blm_gam_freq_indep  = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_freq_layer_indep_", blm_slug(tag)))), BLM_TAGS)
+blm_gam_freq_sub    = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_freq_layer_sub_", blm_slug(tag)))), BLM_TAGS)
+wh_gam_freq         = setNames(lapply(WH_COMPONENTS, function(comp)
+  wh_rds(paste0("model_freq_layer_", comp))), WH_COMPONENTS)
+
+olmo_gam_ftp_indep = olmo_rds("model_ftp_layer_up_independently")
+olmo_gam_ftp_sub   = olmo_rds("model_ftp_layer_up_subword")
+blm_gam_ftp_indep  = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_ftp_layer_indep_", blm_slug(tag)))), BLM_TAGS)
+blm_gam_ftp_sub    = setNames(lapply(BLM_TAGS, function(tag)
+  blm_rds(paste0("model_ftp_layer_sub_", blm_slug(tag)))), BLM_TAGS)
+wh_gam_ftp         = setNames(lapply(WH_COMPONENTS, function(comp)
+  wh_rds(paste0("model_ftp_layer_", comp))), WH_COMPONENTS)
+
+bind_rows(
+  freq_diff_data(olmo_gam_freq_indep, olmo_indep, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(tag)
+    freq_diff_data(blm_gam_freq_indep[[tag]], blm_indep %>% filter(model == tag),
+                   BLM_N_LAYERS[[tag]], BLM_LABELS[[tag]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_freq_indep.csv"))
+
+bind_rows(
+  freq_diff_data(olmo_gam_freq_sub, olmo_sub, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(tag)
+    freq_diff_data(blm_gam_freq_sub[[tag]], blm_sub %>% filter(model == tag),
+                   BLM_N_LAYERS[[tag]], BLM_LABELS[[tag]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_freq_sub.csv"))
+
+bind_rows(lapply(WH_COMPONENTS, function(comp)
+  freq_diff_data(wh_gam_freq[[comp]], whisper_all %>% filter(component == comp),
+                 WH_N_LAYERS, WH_LABELS[[comp]]))) %>%
+  write_csv(file.path(RESULTS_DIR, "ddata_freq_wh.csv"))
+
+bind_rows(
+  ftp_diff_data(olmo_gam_ftp_indep, olmo_indep, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(tag)
+    ftp_diff_data(blm_gam_ftp_indep[[tag]], blm_indep %>% filter(model == tag),
+                  BLM_N_LAYERS[[tag]], BLM_LABELS[[tag]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_ftp_indep.csv"))
+
+bind_rows(
+  ftp_diff_data(olmo_gam_ftp_sub, olmo_sub, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(tag)
+    ftp_diff_data(blm_gam_ftp_sub[[tag]], blm_sub %>% filter(model == tag),
+                  BLM_N_LAYERS[[tag]], BLM_LABELS[[tag]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_ftp_sub.csv"))
+
+bind_rows(lapply(WH_COMPONENTS, function(comp)
+  ftp_diff_data(wh_gam_ftp[[comp]], whisper_all %>% filter(component == comp),
+                WH_N_LAYERS, WH_LABELS[[comp]]))) %>%
+  write_csv(file.path(RESULTS_DIR, "ddata_ftp_wh.csv"))
+
+# ── 6. brms table data ─────────────────────────────────────────────────────────
+message("Loading brms models and extracting posterior summaries...")
+
+brms_df = function(model, model_name) {
+  fe     = as.data.frame(fixef(model))
+  params = rownames(fe)
+  rownames(fe) = NULL
+  post = as_draws_df(model)
+  pgt0 = sapply(params, function(p) {
+    col = paste0("b_", p)
+    if (col %in% names(post)) round(mean(post[[col]] > 0) * 100, 1) else NA_real_
+  })
+  fe %>%
+    mutate(Model = model_name, Parameter = params, `% > 0` = pgt0) %>%
+    select(Model, Parameter, Estimate, Est.Error, Q2.5, Q97.5, `% > 0`)
+}
+
+save_brms_table = function(model_list, filename) {
+  bind_rows(mapply(brms_df, model_list, names(model_list), SIMPLIFY = FALSE)) %>%
+    write_csv(file.path(RESULTS_DIR, filename))
+}
+
+# Load joint linear models
+olmo_brms_joint_indep_first = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_independently_first.rds"))
+olmo_brms_joint_indep_final = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_independently.rds"))
+olmo_brms_joint_sub_first   = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_subword_first.rds"))
+olmo_brms_joint_sub_final   = readRDS(file.path(OLMO_CACHE_DIR, "model_freq_ftp_up_subword.rds"))
+
+blm_brms_joint_indep_first = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_indep_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_joint_indep_final = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_indep_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_joint_sub_first   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_sub_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_joint_sub_final   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_joint_sub_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+
+wh_brms_joint_first = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_joint_first_", comp, ".rds")))), WH_COMPONENTS)
+wh_brms_joint_final = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_joint_final_", comp, ".rds")))), WH_COMPONENTS)
+
+# Load joint poly models
+olmo_brms_poly_joint_indep_first = readRDS(file.path(OLMO_CACHE_DIR, "model_poly_joint_indep_first.rds"))
+olmo_brms_poly_joint_indep_final = readRDS(file.path(OLMO_CACHE_DIR, "model_poly_joint_indep_final.rds"))
+olmo_brms_poly_joint_sub_first   = readRDS(file.path(OLMO_CACHE_DIR, "model_poly_joint_sub_first.rds"))
+olmo_brms_poly_joint_sub_final   = readRDS(file.path(OLMO_CACHE_DIR, "model_poly_joint_sub_final.rds"))
+
+blm_brms_poly_joint_indep_first = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_poly_joint_indep_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_poly_joint_indep_final = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_poly_joint_indep_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_poly_joint_sub_first   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_poly_joint_sub_first_", blm_slug(tag), ".rds")))), BLM_TAGS)
+blm_brms_poly_joint_sub_final   = setNames(lapply(BLM_TAGS, function(tag)
+  readRDS(file.path(BLM_CACHE_DIR, paste0("model_poly_joint_sub_final_", blm_slug(tag), ".rds")))), BLM_TAGS)
+
+wh_brms_poly_joint_first = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_poly_joint_first_", comp, ".rds")))), WH_COMPONENTS)
+wh_brms_poly_joint_final = setNames(lapply(WH_COMPONENTS, function(comp)
+  readRDS(file.path(WH_CACHE_DIR, paste0("model_poly_joint_final_", comp, ".rds")))), WH_COMPONENTS)
+
+# Save brms table CSVs
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_indep_first,
+  "BabyLM 125M" = blm_brms_joint_indep_first[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_indep_first[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_indep_first[["opt-1.3b"]]
+), "tbl_exp1_joint_first.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_indep_final,
+  "BabyLM 125M" = blm_brms_joint_indep_final[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_indep_final[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_indep_final[["opt-1.3b"]]
+), "tbl_exp1_joint_final.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_sub_first,
+  "BabyLM 125M" = blm_brms_joint_sub_first[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_sub_first[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_sub_first[["opt-1.3b"]]
+), "tbl_exp2_joint_first.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_joint_sub_final,
+  "BabyLM 125M" = blm_brms_joint_sub_final[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_joint_sub_final[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_joint_sub_final[["opt-1.3b"]]
+), "tbl_exp2_joint_final.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_poly_joint_indep_first,
+  "BabyLM 125M" = blm_brms_poly_joint_indep_first[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_poly_joint_indep_first[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_poly_joint_indep_first[["opt-1.3b"]]
+), "tbl_exp1_poly_joint_first.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_poly_joint_indep_final,
+  "BabyLM 125M" = blm_brms_poly_joint_indep_final[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_poly_joint_indep_final[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_poly_joint_indep_final[["opt-1.3b"]]
+), "tbl_exp1_poly_joint_final.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_poly_joint_sub_first,
+  "BabyLM 125M" = blm_brms_poly_joint_sub_first[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_poly_joint_sub_first[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_poly_joint_sub_first[["opt-1.3b"]]
+), "tbl_exp2_poly_joint_first.csv")
+
+save_brms_table(list(
+  "OLMo-3 7B"   = olmo_brms_poly_joint_sub_final,
+  "BabyLM 125M" = blm_brms_poly_joint_sub_final[["opt-125m"]],
+  "BabyLM 350M" = blm_brms_poly_joint_sub_final[["opt-350m"]],
+  "BabyLM 1.3B" = blm_brms_poly_joint_sub_final[["opt-1.3b"]]
+), "tbl_exp2_poly_joint_final.csv")
+
+save_brms_table(list(
+  "Encoder" = wh_brms_joint_first[["encoder"]],
+  "Decoder" = wh_brms_joint_first[["decoder"]]
+), "tbl_exp3_joint_first.csv")
+
+save_brms_table(list(
+  "Encoder" = wh_brms_joint_final[["encoder"]],
+  "Decoder" = wh_brms_joint_final[["decoder"]]
+), "tbl_exp3_joint_final.csv")
+
+save_brms_table(list(
+  "Encoder" = wh_brms_poly_joint_first[["encoder"]],
+  "Decoder" = wh_brms_poly_joint_first[["decoder"]]
+), "tbl_exp3_poly_joint_first.csv")
+
+save_brms_table(list(
+  "Encoder" = wh_brms_poly_joint_final[["encoder"]],
+  "Decoder" = wh_brms_poly_joint_final[["decoder"]]
+), "tbl_exp3_poly_joint_final.csv")
+
+# ── 7. Joint surface plot data ─────────────────────────────────────────────────
+message("Computing joint surface data (slow — calls fitted() on brms models)...")
+
+compute_surface_data = function(model, data, label, n_grid = 30) {
+  freq_rng = seq(quantile(data$c_log_freq, 0.01), quantile(data$c_log_freq, 0.99), length.out = n_grid)
+  ftp_rng  = seq(quantile(data$c_log_ftp,  0.01), quantile(data$c_log_ftp,  0.99), length.out = n_grid)
+  grid = expand.grid(c_log_freq = freq_rng, c_log_ftp = ftp_rng) %>%
+    mutate(verb_up = data$verb_up[1])
+  preds    = fitted(model, newdata = grid, re_formula = NA, summary = TRUE)
+  grid$fit = preds[, "Estimate"]
+  grid %>%
+    mutate(
+      freq_mean = mean(data$log_freq, na.rm = TRUE),
+      freq_sd   = sd(data$log_freq,   na.rm = TRUE),
+      ftp_mean  = mean(data$log_ftp,  na.rm = TRUE),
+      ftp_sd    = sd(data$log_ftp,    na.rm = TRUE),
+      label     = label
+    ) %>%
+    select(-verb_up)
+}
+
+message("  Exp1 linear joint (OLMo)...")
+bind_rows(
+  compute_surface_data(olmo_brms_joint_indep_first, olmo_indep_first_ftp, "OLMo \u2014 first layer"),
+  compute_surface_data(olmo_brms_joint_indep_final, olmo_indep_final_ftp, "OLMo \u2014 final layer")
+) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_joint_olmo.csv"))
+
+message("  Exp1 linear joint (BabyLM)...")
+bind_rows(c(
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_joint_indep_first[[tag]],
+                         blm_indep_first_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_joint_indep_final[[tag]],
+                         blm_indep_final_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
+)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_joint_blm.csv"))
+
+message("  Exp2 linear joint (OLMo)...")
+bind_rows(
+  compute_surface_data(olmo_brms_joint_sub_first, olmo_sub_first_ftp, "OLMo \u2014 first layer"),
+  compute_surface_data(olmo_brms_joint_sub_final, olmo_sub_final_ftp, "OLMo \u2014 final layer")
+) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_joint_olmo.csv"))
+
+message("  Exp2 linear joint (BabyLM)...")
+bind_rows(c(
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_joint_sub_first[[tag]],
+                         blm_sub_first_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_joint_sub_final[[tag]],
+                         blm_sub_final_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
+)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_joint_blm.csv"))
+
+message("  Exp3 linear joint (Whisper)...")
+bind_rows(
+  compute_surface_data(wh_brms_joint_first[["encoder"]],
+                       whisper_first_ftp %>% filter(component == "encoder"), "Encoder \u2014 first layer"),
+  compute_surface_data(wh_brms_joint_final[["encoder"]],
+                       whisper_final_ftp %>% filter(component == "encoder"), "Encoder \u2014 final layer"),
+  compute_surface_data(wh_brms_joint_first[["decoder"]],
+                       whisper_first_ftp %>% filter(component == "decoder"), "Decoder \u2014 first layer"),
+  compute_surface_data(wh_brms_joint_final[["decoder"]],
+                       whisper_final_ftp %>% filter(component == "decoder"), "Decoder \u2014 final layer")
+) %>% write_csv(file.path(RESULTS_DIR, "surface_exp3_joint_wh.csv"))
+
+message("  Exp1 poly joint (OLMo)...")
+bind_rows(
+  compute_surface_data(olmo_brms_poly_joint_indep_first, olmo_indep_first_ftp, "OLMo \u2014 first layer"),
+  compute_surface_data(olmo_brms_poly_joint_indep_final, olmo_indep_final_ftp, "OLMo \u2014 final layer")
+) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_poly_olmo.csv"))
+
+message("  Exp1 poly joint (BabyLM)...")
+bind_rows(c(
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_poly_joint_indep_first[[tag]],
+                         blm_indep_first_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_poly_joint_indep_final[[tag]],
+                         blm_indep_final_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
+)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_poly_blm.csv"))
+
+message("  Exp2 poly joint (OLMo)...")
+bind_rows(
+  compute_surface_data(olmo_brms_poly_joint_sub_first, olmo_sub_first_ftp, "OLMo \u2014 first layer"),
+  compute_surface_data(olmo_brms_poly_joint_sub_final, olmo_sub_final_ftp, "OLMo \u2014 final layer")
+) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_poly_olmo.csv"))
+
+message("  Exp2 poly joint (BabyLM)...")
+bind_rows(c(
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_poly_joint_sub_first[[tag]],
+                         blm_sub_first_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
+  lapply(BLM_TAGS, function(tag)
+    compute_surface_data(blm_brms_poly_joint_sub_final[[tag]],
+                         blm_sub_final_ftp %>% filter(model == tag),
+                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
+)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_poly_blm.csv"))
+
+message("  Exp3 poly joint (Whisper)...")
+bind_rows(
+  compute_surface_data(wh_brms_poly_joint_first[["encoder"]],
+                       whisper_first_ftp %>% filter(component == "encoder"), "Encoder \u2014 first layer"),
+  compute_surface_data(wh_brms_poly_joint_final[["encoder"]],
+                       whisper_final_ftp %>% filter(component == "encoder"), "Encoder \u2014 final layer"),
+  compute_surface_data(wh_brms_poly_joint_first[["decoder"]],
+                       whisper_first_ftp %>% filter(component == "decoder"), "Decoder \u2014 first layer"),
+  compute_surface_data(wh_brms_poly_joint_final[["decoder"]],
+                       whisper_final_ftp %>% filter(component == "decoder"), "Decoder \u2014 final layer")
+) %>% write_csv(file.path(RESULTS_DIR, "surface_exp3_poly_wh.csv"))
+
+message("Done! All results saved to ", RESULTS_DIR, "/")
