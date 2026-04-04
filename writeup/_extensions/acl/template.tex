@@ -43,6 +43,9 @@ $endif$
 % Fix table caption numbering for longtable
 \def\fnum@table{\tablename~\thetable}
 
+% Float placement — [H] pins floats exactly where defined
+\usepackage{float}
+
 % Graphics
 \usepackage{graphicx}
 \makeatletter
@@ -106,11 +109,5 @@ $abstract$
 $endif$
 
 $body$
-
-% acl.sty sets \bibliographystyle{acl_natbib} at load time.
-% Only \bibliography{} is needed here to point to the bib file(s).
-$if(bibliography)$
-\bibliography{$for(bibliography)$$bibliography$$sep$,$endfor$}
-$endif$
 
 \end{document}

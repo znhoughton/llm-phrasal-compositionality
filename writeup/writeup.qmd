@@ -2,7 +2,8 @@
 title: "writeup"
 acl-mode: review
 format:
-  acl-pdf: default
+  acl-pdf:
+    keep-tex: true
   html: default
 editor: visual
 author:
@@ -22,6 +23,7 @@ author:
 abstract: |
   (Abstract goes here.)
 bibliography: references.bib
+tbl-cap-location: bottom
 execute:
   echo: false
   message: false
@@ -34,7 +36,7 @@ execute:
 
 library(tidyverse)
 library(patchwork)
-library(viridis)
+library(kableExtra)
 
 # ── Results directory ──────────────────────────────────────────────────────────
 RES = "results"
@@ -45,203 +47,108 @@ blm_items    = read_csv(file.path(RES, "blm_items.csv"),    show_col_types = FAL
 wh_splits    = read_csv(file.path(RES, "wh_splits.csv"),    show_col_types = FALSE)
 wh_items_by_comp = read_csv(file.path(RES, "whisper_items_by_component.csv"), show_col_types = FALSE)
 
-ddata_freq_indep = read_csv(file.path(RES, "ddata_freq_indep.csv"), show_col_types = FALSE)
-ddata_freq_sub   = read_csv(file.path(RES, "ddata_freq_sub.csv"),   show_col_types = FALSE)
-ddata_freq_wh    = read_csv(file.path(RES, "ddata_freq_wh.csv"),    show_col_types = FALSE)
-ddata_ftp_indep  = read_csv(file.path(RES, "ddata_ftp_indep.csv"),  show_col_types = FALSE)
-ddata_ftp_sub    = read_csv(file.path(RES, "ddata_ftp_sub.csv"),    show_col_types = FALSE)
-ddata_ftp_wh     = read_csv(file.path(RES, "ddata_ftp_wh.csv"),     show_col_types = FALSE)
-
-tbl_exp1_joint_first      = read_csv(file.path(RES, "tbl_exp1_joint_first.csv"),      show_col_types = FALSE)
-tbl_exp1_joint_final      = read_csv(file.path(RES, "tbl_exp1_joint_final.csv"),      show_col_types = FALSE)
-tbl_exp2_joint_first      = read_csv(file.path(RES, "tbl_exp2_joint_first.csv"),      show_col_types = FALSE)
-tbl_exp2_joint_final      = read_csv(file.path(RES, "tbl_exp2_joint_final.csv"),      show_col_types = FALSE)
-tbl_exp1_poly_joint_first = read_csv(file.path(RES, "tbl_exp1_poly_joint_first.csv"), show_col_types = FALSE)
-tbl_exp1_poly_joint_final = read_csv(file.path(RES, "tbl_exp1_poly_joint_final.csv"), show_col_types = FALSE)
-tbl_exp2_poly_joint_first = read_csv(file.path(RES, "tbl_exp2_poly_joint_first.csv"), show_col_types = FALSE)
-tbl_exp2_poly_joint_final = read_csv(file.path(RES, "tbl_exp2_poly_joint_final.csv"), show_col_types = FALSE)
-tbl_exp3_joint_first      = read_csv(file.path(RES, "tbl_exp3_joint_first.csv"),      show_col_types = FALSE)
-tbl_exp3_joint_final      = read_csv(file.path(RES, "tbl_exp3_joint_final.csv"),      show_col_types = FALSE)
-tbl_exp3_poly_joint_first = read_csv(file.path(RES, "tbl_exp3_poly_joint_first.csv"), show_col_types = FALSE)
-tbl_exp3_poly_joint_final = read_csv(file.path(RES, "tbl_exp3_poly_joint_final.csv"), show_col_types = FALSE)
+tbl_exp1_joint_first = read_csv(file.path(RES, "tbl_exp1_joint_first.csv"), show_col_types = FALSE)
+tbl_exp1_joint_final = read_csv(file.path(RES, "tbl_exp1_joint_final.csv"), show_col_types = FALSE)
+tbl_exp2_joint_first = read_csv(file.path(RES, "tbl_exp2_joint_first.csv"), show_col_types = FALSE)
+tbl_exp2_joint_final = read_csv(file.path(RES, "tbl_exp2_joint_final.csv"), show_col_types = FALSE)
+tbl_exp3_joint_first = read_csv(file.path(RES, "tbl_exp3_joint_first.csv"), show_col_types = FALSE)
+tbl_exp3_joint_final = read_csv(file.path(RES, "tbl_exp3_joint_final.csv"), show_col_types = FALSE)
 
 surface_exp1_joint_olmo = read_csv(file.path(RES, "surface_exp1_joint_olmo.csv"), show_col_types = FALSE)
 surface_exp1_joint_blm  = read_csv(file.path(RES, "surface_exp1_joint_blm.csv"),  show_col_types = FALSE)
 surface_exp2_joint_olmo = read_csv(file.path(RES, "surface_exp2_joint_olmo.csv"), show_col_types = FALSE)
 surface_exp2_joint_blm  = read_csv(file.path(RES, "surface_exp2_joint_blm.csv"),  show_col_types = FALSE)
 surface_exp3_joint_wh   = read_csv(file.path(RES, "surface_exp3_joint_wh.csv"),   show_col_types = FALSE)
-surface_exp1_poly_olmo  = read_csv(file.path(RES, "surface_exp1_poly_olmo.csv"),  show_col_types = FALSE)
-surface_exp1_poly_blm   = read_csv(file.path(RES, "surface_exp1_poly_blm.csv"),   show_col_types = FALSE)
-surface_exp2_poly_olmo  = read_csv(file.path(RES, "surface_exp2_poly_olmo.csv"),  show_col_types = FALSE)
-surface_exp2_poly_blm   = read_csv(file.path(RES, "surface_exp2_poly_blm.csv"),   show_col_types = FALSE)
-surface_exp3_poly_wh    = read_csv(file.path(RES, "surface_exp3_poly_wh.csv"),    show_col_types = FALSE)
 
 # ── Plot helpers ───────────────────────────────────────────────────────────────
-plot_joint_surface = function(df, title) {
-  ggplot(df, aes(x = c_log_freq * freq_sd + freq_mean,
-                 y = c_log_ftp  * ftp_sd  + ftp_mean,
-                 fill = fit)) +
-    geom_tile() +
-    scale_fill_viridis_c(name = "Predicted\nlogit") +
-    labs(title = title, x = "log(frequency)", y = "logit(FTP)") +
-    theme_minimal(base_size = 10)
+uo_colors = c("#007030", "#C9A92C", "#104735")
+
+clean_brms_table = function(df) {
+  param_labels = c(
+    "Intercept"            = "Intercept",
+    "c_log_freq"           = "Freq",
+    "c_log_ftp"            = "Predic.",
+    "Ic_log_freqE2"        = "Freq\u00b2",
+    "Ic_log_ftpE2"         = "Predic.\u00b2",
+    "c_log_freq:c_log_ftp" = "Freq:Predic."
+  )
+  df %>%
+    mutate(
+      Parameter = dplyr::recode(Parameter, !!!param_labels),
+      `95% CI`  = sprintf("[%.2f, %.2f]", Q2.5, Q97.5),
+      Estimate  = round(Estimate, 2),
+      Est.Error = round(Est.Error, 2),
+      `% > 0`   = round(`% > 0`, 1)
+    ) %>%
+    select(Model, Coef = Parameter, Est. = Estimate, `Err.` = Est.Error,
+           `95% CI`, `% > 0`)
 }
 
-surfaces_to_plots = function(df) {
+plot_marginal_surfaces = function(df) {
   df %>%
     mutate(label = factor(label, levels = unique(label))) %>%
     group_by(label) %>%
-    group_map(~ plot_joint_surface(.x, as.character(.y$label))) %>%
-    setNames(levels(factor(df$label, levels = unique(df$label))))
+    group_modify(function(sub, key) {
+      ftp_mid  = sub$c_log_ftp[which.min(abs(sub$c_log_ftp))]
+      freq_mid = sub$c_log_freq[which.min(abs(sub$c_log_freq))]
+      bind_rows(
+        sub %>% filter(abs(c_log_ftp  - ftp_mid)  < 1e-9) %>%
+          transmute(x = c_log_freq * freq_sd + freq_mean, fit, panel = "Frequency"),
+        sub %>% filter(abs(c_log_freq - freq_mid) < 1e-9) %>%
+          transmute(x = c_log_ftp  * ftp_sd  + ftp_mean,  fit, panel = "Predictability")
+      )
+    }) %>%
+    ungroup() %>%
+    mutate(panel = factor(panel, levels = c("Frequency", "Predictability"))) %>%
+    ggplot(aes(x = x, y = fit, color = label)) +
+    geom_line(linewidth = 1) +
+    facet_wrap(~ panel, scales = "free_x") +
+    scale_color_manual(values = uo_colors) +
+    labs(x = NULL, y = "Predicted logit", color = NULL) +
+    theme_minimal() +
+    theme(legend.position = "right")
 }
 
-plot_freq_diff = function(df, ncol = 2) {
-  df %>%
-    mutate(panel = factor(panel, levels = unique(panel))) %>%
-    ggplot(aes(x = layer, y = diff)) +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "steelblue", alpha = 0.2) +
-    geom_ribbon(aes(ymin = lo80, ymax = hi80), fill = "steelblue", alpha = 0.3) +
-    geom_line(linewidth = 1, color = "steelblue4") +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
-    facet_wrap(~ panel, ncol = ncol, scales = "free_x") +
-    labs(x = "Layer", y = expression(Delta ~ "logit (90th" ~ "-" ~ "10th pct freq)")) +
-    theme_minimal()
+blm_strip = function(df, layer) {
+  df %>% filter(str_detect(label, layer)) %>%
+    mutate(label = str_remove(label, " \u2014.*$"))
 }
 
-plot_ftp_diff = function(df, ncol = 2) {
-  df %>%
-    mutate(panel = factor(panel, levels = unique(panel))) %>%
-    ggplot(aes(x = layer, y = diff)) +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "darkorange", alpha = 0.2) +
-    geom_ribbon(aes(ymin = lo80, ymax = hi80), fill = "darkorange", alpha = 0.3) +
-    geom_line(linewidth = 1, color = "darkorange4") +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
-    facet_wrap(~ panel, ncol = ncol, scales = "free_x") +
-    labs(x = "Layer", y = expression(Delta ~ "logit (90th" ~ "-" ~ "10th pct FTP)")) +
-    theme_minimal()
+wh_strip = function(df, layer) {
+  df %>% filter(str_detect(label, layer)) %>%
+    mutate(label = str_remove(label, " \u2014.*$"))
 }
 ```
-
 
 # Experiment 1: UP Independently
 
 ## Items
 
+Placeholder reference: @houghton2020perceptualconsequencespauses.
+
 The classifier was trained to distinguish the hidden-state representation of the particle *up* from representations of other tokens in the same sentence. Positive training examples consisted of 1,000 occurrences of standalone *up* (i.e., functioning as a verbal particle, as in *pick up*), drawn from sentences in the C4 corpus. Negative examples were 1,000 tokens randomly selected from the same sentences, restricted to tokens whose decoded string consists entirely of alphabetic characters (no numbers, punctuation, or special characters), and excluding *up* itself and any token containing *up* as a substring. The validation set was constructed identically from a non-overlapping set of sentences (targeting 1,000 positive, 1,000 negative; exact counts vary slightly by model depending on how many sentences yield a valid token position under each tokenizer — see @tbl-exp1-splits).
 
 The classifiers targeting OLMo-3 7B and the BabyLM models were trained on the **same underlying sentences**, but the frequency and predictability statistics used in the analyses were derived from the respective corpus for each model (the C4 corpus for the OLMo model and the BabyLM corpus for the BabyLM models). In other words, the training sentences were identical across models, but the tokenization and corpus statistics varied.
 
-Split sizes by model are shown in @tbl-exp1-splits. The test set comprised verb–*up* phrasal verb types (e.g., *pick up*, *set up*) with at least 20 occurrences in the corpus; up to 20 sentences were sampled per type. Corpus frequency and forward transitional probability (FTP; $P(\text{up} \mid V)$) were derived from the corpus matched to each model's training distribution. Because the BabyLM corpus is smaller than C4, fewer V+up types attain a valid (non-zero) FTP estimate under BabyLM statistics; only types with a valid FTP are included in the analyses. Item-level statistics for the test set are shown in @tbl-exp1-items.
+Classifier training and validation split sizes are shown in @tbl-exp1-splits (Appendix). The test set comprised verb–*up* phrasal verb types (e.g., *pick up*, *set up*) with at least 20 occurrences in the corpus; up to 20 sentences were sampled per type. Corpus frequency and forward transitional probability (FTP; $P(\text{up} \mid V)$) were derived from the corpus matched to each model's training distribution. Because the BabyLM corpus is smaller than C4, fewer V+up types attain a valid (non-zero) FTP estimate under BabyLM statistics; only types with a valid FTP are included in the analyses. Full item-level statistics are reported in @tbl-test-items (Appendix).
 
-```{r}
-#| label: tbl-exp1-splits
-#| tbl-cap: "Train, validation, and test split sizes for Experiment 1 (UP independently). Positive (pos) = standalone *up*; negative (neg) = other alphabetic token from the same sentence. Test types = unique V+up types with ≥20 corpus occurrences; items w/ FTP = subset with a valid (non-zero) FTP in the model-matched corpus."
-tibble::tribble(
-  ~Model,         ~`Train pos`, ~`Train neg`, ~`Val pos`, ~`Val neg`, ~`Test sentences`, ~`Test types`, ~`Items w/ FTP`,
-  "OLMo-3 7B",   1000L,        1000L,        992L,       1000L,      81586L,            4082L,         3927L,
-  "BabyLM 125M", 1000L,        1000L,        999L,       1000L,      81543L,            4082L,         1039L,
-  "BabyLM 350M", 1000L,        1000L,        999L,       1000L,      81543L,            4082L,         1039L,
-  "BabyLM 1.3B", 1000L,        1000L,        916L,       1000L,      80425L,            4081L,         1039L
-) %>% knitr::kable(row.names = FALSE, format.args = list(big.mark = ","))
-```
-
-```{r}
-#| label: tbl-exp1-items
-#| tbl-cap: "Item-level statistics for unique V+up types in the test set, restricted to types with a valid FTP in the model-matched corpus. Frequency is the raw corpus count; FTP = P(up | V); logit(FTP) = log(FTP / (1 − FTP)). OLMo uses C4 statistics; BabyLM uses BabyLM-corpus statistics (opt-125m shown as representative)."
-bind_rows(
-  olmo_items %>% mutate(Model = "OLMo-3 7B"),
-  blm_items  %>% mutate(Model = "BabyLM 125M")
-) %>%
-  group_by(Model) %>%
-  summarise(
-    `N items`       = n(),
-    `Median freq`   = as.integer(median(frequency)),
-    `Freq range`    = sprintf("%s \u2013 %s",
-                       format(min(frequency), big.mark=","),
-                       format(max(frequency), big.mark=",")),
-    `Median FTP`    = round(median(ftp, na.rm = TRUE), 4),
-    `FTP range`     = sprintf("%.5f \u2013 %.3f", min(ftp, na.rm=TRUE), max(ftp, na.rm=TRUE)),
-    `Med logit(FTP)` = round(median(log_ftp, na.rm = TRUE), 2),
-    `Sents/type (med)` = 20L,
-    .groups = "drop"
-  ) %>%
-  knitr::kable(row.names = FALSE)
-```
-
-## Joint model — first layer
-
-```{r}
-#| label: tbl-exp1-joint-first
-#| tbl-cap: "Joint frequency × FTP model at the first layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp1_joint_first, digits = 3, row.names = FALSE)
-```
-
-## Joint model — final layer
-
-```{r}
-#| label: tbl-exp1-joint-final
-#| tbl-cap: "Joint frequency × FTP model at the final layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp1_joint_final, digits = 3, row.names = FALSE)
-```
+For OLMo-3 7B, 3,927 unique V+*up* types were included, with a median corpus frequency of 92 (range: 20–390,086) and a median logit(FTP) of $-5.38$ (range: $-10.42$–$3.87$). The BabyLM models shared 1,039 items; these items had a higher median frequency (920) and higher median logit(FTP) ($-3.40$) under BabyLM-corpus statistics, reflecting the smaller and more concentrated vocabulary of the BabyLM training data.
 
 ## Joint model — predicted surfaces (linear)
 
 ```{r}
 #| label: fig-exp1-joint-surfaces
-#| fig-cap: "Predicted classifier logit as a joint function of log-frequency and logit(FTP) from the linear joint brms model (logit ~ c_log_freq × c_log_ftp), at the first and final layers, for OLMo-3 7B (UP independently). Colour indicates predicted logit; axes are back-transformed to the original log/logit scale."
-wrap_plots(surfaces_to_plots(surface_exp1_joint_olmo))
+#| fig-cap: "Predicted logit as a function of frequency (left) and predictability (right) from the linear joint brms model, at the first and final layers, for OLMo-3 7B (UP independently). Each line slices the joint surface at the mean of the other predictor."
+plot_marginal_surfaces(surface_exp1_joint_olmo %>%
+  mutate(label = if_else(str_detect(label, "first"), "First layer", "Final layer")))
 ```
 
 ```{r}
 #| label: fig-exp1-joint-surfaces-blm
-#| fig-cap: "Predicted logit surfaces from the linear joint brms model at the first and final layers for BabyLM models (UP independently)."
-wrap_plots(surfaces_to_plots(surface_exp1_joint_blm))
-```
-
-## Polynomial joint model — first layer
-
-```{r}
-#| label: tbl-exp1-poly-joint-first
-#| tbl-cap: "Polynomial joint model (logit ~ freq + freq² + FTP + FTP² + freq:FTP) at the first layer for UP independently. All predictors are centered and scaled. % > 0 = percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp1_poly_joint_first, digits = 3, row.names = FALSE)
-```
-
-## Polynomial joint model — final layer
-
-```{r}
-#| label: tbl-exp1-poly-joint-final
-#| tbl-cap: "Polynomial joint model (logit ~ freq + freq² + FTP + FTP² + freq:FTP) at the final layer for UP independently. All predictors are centered and scaled. % > 0 = percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp1_poly_joint_final, digits = 3, row.names = FALSE)
-```
-
-## Polynomial joint model — predicted surfaces
-
-```{r}
-#| label: fig-exp1-poly-joint-surfaces
-#| fig-cap: "Predicted logit surfaces from the polynomial joint brms model at the first and final layers for OLMo-3 7B (UP independently)."
-wrap_plots(surfaces_to_plots(surface_exp1_poly_olmo))
-```
-
-```{r}
-#| label: fig-exp1-poly-joint-surfaces-blm
-#| fig-cap: "Predicted logit surfaces from the polynomial joint brms model at the first and final layers for BabyLM models (UP independently)."
-wrap_plots(surfaces_to_plots(surface_exp1_poly_blm))
-```
-
-## Frequency effect across layers
-
-```{r}
-#| label: fig-exp1-freq
-#| fig-cap: "Estimated frequency effect (difference in predicted logit between the 90th and 10th percentile of log frequency) across layers for UP independently. Ribbons show 80% and 95% confidence intervals. Panels show OLMo-3 7B and BabyLM models of increasing size."
-plot_freq_diff(ddata_freq_indep)
-```
-
-## FTP effect across layers
-
-```{r}
-#| label: fig-exp1-ftp
-#| fig-cap: "Estimated FTP effect (difference in predicted logit between the 90th and 10th percentile of log-odds FTP) across layers for UP independently. Ribbons show 80% and 95% confidence intervals. Panels show OLMo-3 7B and BabyLM models of increasing size."
-plot_ftp_diff(ddata_ftp_indep)
+#| fig-cap: "Predicted logit as a function of frequency (left) and predictability (right) from the linear joint brms model at the first (top) and final (bottom) layers, for BabyLM models (UP independently). Each line slices the joint surface at the mean of the other predictor."
+p1 = plot_marginal_surfaces(blm_strip(surface_exp1_joint_blm, "first")) + labs(title = "First layer")
+p2 = plot_marginal_surfaces(blm_strip(surface_exp1_joint_blm, "final")) + labs(title = "Final layer")
+(p1 / p2) + plot_layout(guides = "collect") & theme(legend.position = "right")
 ```
 
 # Experiment 2: UP as Subword
@@ -250,116 +157,23 @@ plot_ftp_diff(ddata_ftp_indep)
 
 The training set for this experiment combined two types of positive example: 1,000 occurrences of standalone *up* (identical to Experiment 1) and 1,000 occurrences of *up* embedded within a larger word (e.g., *update*, *upon*, *setup*). Critically, the subword positives were restricted to **unique word types**: each up-containing word form contributed exactly one instance, so the classifier could not learn to recognise a high-frequency form like *setup* from repeated exposure. Negative examples (1,000 drawn from each sentence pool) were tokens consisting entirely of alphabetic characters that did not contain *up* as a substring. The validation set was constructed by the same procedure (targeting 1,000 positive, 1,000 negative per sentence pool; exact counts vary by tokenizer — see @tbl-exp2-splits). As in Experiment 1, OLMo-3 7B and BabyLM models used the same underlying sentences with their own tokenizers, and BabyLM models used BabyLM-corpus statistics for frequency and FTP. The test set was identical to Experiment 1: all verb–*up* phrasal verb types with at least 20 corpus occurrences, sampled at up to 20 sentences per type.
 
-Split sizes by model are shown in @tbl-exp2-splits. The OLMo training set contained 1,000 unique up-within-word types; BabyLM models similarly contributed 1,000 unique types, with the exact set varying by tokenizer. Validation-set sizes differ slightly across models because some sentences could not be resolved to a valid token position under each model's tokenizer. Item-level statistics for the test set are identical to Experiment 1 (same underlying V+up types) and are shown in @tbl-exp2-items.
-
-```{r}
-#| label: tbl-exp2-splits
-#| tbl-cap: "Train, validation, and test split sizes for Experiment 2 (UP as subword). Positive examples: 1,000 standalone *up* + 1,000 unique up-within-word types. Negative examples: 1,000 from each sentence pool (standalone and subword). Val sizes vary by model due to tokenizer coverage."
-tibble::tribble(
-  ~Model,         ~`Train standalone`, ~`Train subword (unique types)`, ~`Train neg`, ~`Val rows`, ~`Test sentences`, ~`Test types`,
-  "OLMo-3 7B",   1000L,               1000L,                           2000L,        3868L,       81586L,            4082L,
-  "BabyLM 125M", 1000L,               1000L,                           2000L,        3582L,       81543L,            4082L,
-  "BabyLM 350M", 1000L,               1000L,                           2000L,        3582L,       81543L,            4082L,
-  "BabyLM 1.3B", 1000L,               1000L,                           2000L,        3773L,       80425L,            4081L
-) %>% knitr::kable(row.names = FALSE, format.args = list(big.mark = ","))
-```
-
-```{r}
-#| label: tbl-exp2-items
-#| tbl-cap: "Item-level statistics for unique V+up types in the Experiment 2 test set (identical items to Experiment 1; same V+up types, same sentences)."
-bind_rows(
-  olmo_items %>% mutate(Model = "OLMo-3 7B"),
-  blm_items  %>% mutate(Model = "BabyLM 125M")
-) %>%
-  group_by(Model) %>%
-  summarise(
-    `N items`       = n(),
-    `Median freq`   = as.integer(median(frequency)),
-    `Freq range`    = sprintf("%s \u2013 %s",
-                       format(min(frequency), big.mark=","),
-                       format(max(frequency), big.mark=",")),
-    `Median FTP`    = round(median(ftp, na.rm = TRUE), 4),
-    `FTP range`     = sprintf("%.5f \u2013 %.3f", min(ftp, na.rm=TRUE), max(ftp, na.rm=TRUE)),
-    `Med logit(FTP)` = round(median(log_ftp, na.rm = TRUE), 2),
-    .groups = "drop"
-  ) %>%
-  knitr::kable(row.names = FALSE)
-```
-
-## Joint model — first layer
-
-```{r}
-#| label: tbl-exp2-joint-first
-#| tbl-cap: "Joint frequency × FTP model at the first layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp2_joint_first, digits = 3, row.names = FALSE)
-```
-
-## Joint model — final layer
-
-```{r}
-#| label: tbl-exp2-joint-final
-#| tbl-cap: "Joint frequency × FTP model at the final layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp2_joint_final, digits = 3, row.names = FALSE)
-```
+Classifier training and validation split sizes are shown in @tbl-exp2-splits (Appendix). The OLMo training set contained 1,000 unique up-within-word types; BabyLM models similarly contributed 1,000 unique types, with the exact set varying by tokenizer. Validation-set sizes differ slightly across models because some sentences could not be resolved to a valid token position under each model's tokenizer. The test set is identical to Experiment 1; item-level statistics are shown in @tbl-test-items.
 
 ## Joint model — predicted surfaces (linear)
 
 ```{r}
 #| label: fig-exp2-joint-surfaces
-#| fig-cap: "Predicted logit surfaces from the linear joint brms model at the first and final layers for OLMo-3 7B (UP as subword)."
-wrap_plots(surfaces_to_plots(surface_exp2_joint_olmo))
+#| fig-cap: "Predicted logit as a function of frequency (left) and predictability (right) from the linear joint brms model, at the first and final layers, for OLMo-3 7B (UP as subword). Each line slices the joint surface at the mean of the other predictor."
+plot_marginal_surfaces(surface_exp2_joint_olmo %>%
+  mutate(label = if_else(str_detect(label, "first"), "First layer", "Final layer")))
 ```
 
 ```{r}
 #| label: fig-exp2-joint-surfaces-blm
-#| fig-cap: "Predicted logit surfaces from the linear joint brms model at the first and final layers for BabyLM models (UP as subword)."
-wrap_plots(surfaces_to_plots(surface_exp2_joint_blm))
-```
-
-## Polynomial joint model — first layer
-
-```{r}
-#| label: tbl-exp2-poly-joint-first
-#| tbl-cap: "Polynomial joint model (logit ~ freq + freq² + FTP + FTP² + freq:FTP) at the first layer for UP as subword. All predictors are centered and scaled. % > 0 = percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp2_poly_joint_first, digits = 3, row.names = FALSE)
-```
-
-## Polynomial joint model — final layer
-
-```{r}
-#| label: tbl-exp2-poly-joint-final
-#| tbl-cap: "Polynomial joint model (logit ~ freq + freq² + FTP + FTP² + freq:FTP) at the final layer for UP as subword. All predictors are centered and scaled. % > 0 = percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp2_poly_joint_final, digits = 3, row.names = FALSE)
-```
-
-## Polynomial joint model — predicted surfaces
-
-```{r}
-#| label: fig-exp2-poly-joint-surfaces
-#| fig-cap: "Predicted logit surfaces from the polynomial joint brms model at the first and final layers for OLMo-3 7B (UP as subword)."
-wrap_plots(surfaces_to_plots(surface_exp2_poly_olmo))
-```
-
-```{r}
-#| label: fig-exp2-poly-joint-surfaces-blm
-#| fig-cap: "Predicted logit surfaces from the polynomial joint brms model at the first and final layers for BabyLM models (UP as subword)."
-wrap_plots(surfaces_to_plots(surface_exp2_poly_blm))
-```
-
-## Frequency effect across layers
-
-```{r}
-#| label: fig-exp2-freq
-#| fig-cap: "Estimated frequency effect (difference in predicted logit between the 90th and 10th percentile of log frequency) across layers for UP as subword. Ribbons show 80% and 95% confidence intervals. Panels show OLMo-3 7B and BabyLM models of increasing size."
-plot_freq_diff(ddata_freq_sub)
-```
-
-## FTP effect across layers
-
-```{r}
-#| label: fig-exp2-ftp
-#| fig-cap: "Estimated FTP effect (difference in predicted logit between the 90th and 10th percentile of log-odds FTP) across layers for UP as subword. Ribbons show 80% and 95% confidence intervals. Panels show OLMo-3 7B and BabyLM models of increasing size."
-plot_ftp_diff(ddata_ftp_sub)
+#| fig-cap: "Predicted logit as a function of frequency (left) and predictability (right) from the linear joint brms model at the first (top) and final (bottom) layers, for BabyLM models (UP as subword). Each line slices the joint surface at the mean of the other predictor."
+p1 = plot_marginal_surfaces(blm_strip(surface_exp2_joint_blm, "first")) + labs(title = "First layer")
+p2 = plot_marginal_surfaces(blm_strip(surface_exp2_joint_blm, "final")) + labs(title = "Final layer")
+(p1 / p2) + plot_layout(guides = "collect") & theme(legend.position = "right")
 ```
 
 # Experiment 3: Whisper (ASR Model)
@@ -370,94 +184,142 @@ The Whisper experiment used spoken language data drawn from a mixed-source audio
 
 The **training and validation sets** used 1,000 *word_up* instances each as positive examples, paired with 1,000 randomly selected non-*up* words from the same segment as negative examples. This mirrors the standalone-*up* training design of Experiments 1 and 2. Negative words were restricted to those whose string consists entirely of alphabetic characters (matching the `token.isalpha()` criterion used in Experiments 1 and 2), with a minimum duration of 20 ms. Training and validation segments were non-overlapping.
 
-The **test set** comprised V+up phrasal verb types with at least 5 occurrences in the audio dataset, yielding 1,466 qualifying types, with up to 20 instances per type (median: 16 sentences per type; range: 5–20). The minimum-occurrence threshold is lower than in Experiments 1 and 2 (which required at least 20 corpus sentences per type), reflecting the sparser coverage of audio relative to written text. Corpus frequency and FTP values were drawn from the C4-derived lookup table used in Experiments 1 and 2. Split sizes are shown in @tbl-exp3-splits and item-level statistics for the Whisper test set are shown in @tbl-exp3-items.
-
-```{r}
-#| label: tbl-exp3-splits
-#| tbl-cap: "Train, validation, and test split sizes for Experiment 3 (Whisper). Train/val positive examples are *word_up* instances; negatives are random non-*up* alphabetic tokens from the same segment. Encoder and decoder are evaluated on the same audio segments using the same train/val/test split."
-knitr::kable(wh_splits, row.names = FALSE, format.args = list(big.mark = ","))
-```
-
-```{r}
-#| label: tbl-exp3-items
-#| tbl-cap: "Item-level statistics for unique V+up types in the Whisper test set by component. Frequency and FTP are from C4 (identical across components). FTP = P(up | V); logit(FTP) = log(FTP / (1 − FTP))."
-wh_items_by_comp %>%
-  group_by(Component = str_to_title(as.character(component))) %>%
-  summarise(
-    `N items`        = n(),
-    `Median freq`    = as.integer(median(frequency)),
-    `Freq range`     = sprintf("%s \u2013 %s",
-                        format(min(frequency), big.mark=","),
-                        format(max(frequency), big.mark=",")),
-    `Median FTP`     = round(median(ftp, na.rm = TRUE), 4),
-    `FTP range`      = sprintf("%.5f \u2013 %.3f", min(ftp, na.rm=TRUE), max(ftp, na.rm=TRUE)),
-    `Med logit(FTP)` = round(median(log_ftp, na.rm = TRUE), 2),
-    `Med sents/type` = 16L,
-    .groups = "drop"
-  ) %>%
-  knitr::kable(row.names = FALSE)
-```
-
-## Joint model — first layer
-
-```{r}
-#| label: tbl-exp3-joint-first
-#| tbl-cap: "Joint frequency × FTP model at the first layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp3_joint_first, digits = 3, row.names = FALSE)
-```
-
-## Joint model — final layer
-
-```{r}
-#| label: tbl-exp3-joint-final
-#| tbl-cap: "Joint frequency × FTP model at the final layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp3_joint_final, digits = 3, row.names = FALSE)
-```
+The **test set** comprised V+up phrasal verb types with at least 5 occurrences in the audio dataset, yielding 1,466 qualifying types, with up to 20 instances per type (median: 16 sentences per type; range: 5–20). The minimum-occurrence threshold is lower than in Experiments 1 and 2 (which required at least 20 corpus sentences per type), reflecting the sparser coverage of audio relative to written text. Corpus frequency and FTP values were drawn from the C4-derived lookup table used in Experiments 1 and 2. Classifier training and validation split sizes are shown in @tbl-exp3-splits (Appendix) and full item-level statistics are shown in @tbl-test-items (Appendix). After filtering to types with a valid C4 FTP estimate, 1,397 unique V+*up* types were retained for both encoder and decoder, with a median corpus frequency of 683 (range: 20–390,086) and a median logit(FTP) of $-4.05$ (range: $-10.42$–$3.87$).
 
 ## Joint model — predicted surfaces (linear)
 
 ```{r}
 #| label: fig-exp3-joint-surfaces
-#| fig-cap: "Predicted logit surfaces from the linear joint brms model at the first and final layers for Whisper encoder and decoder."
-wrap_plots(surfaces_to_plots(surface_exp3_joint_wh), ncol = 2)
+#| fig-cap: "Predicted logit as a function of frequency (left) and predictability (right) from the linear joint brms model at the first (top) and final (bottom) layers, for Whisper encoder and decoder. Each line slices the joint surface at the mean of the other predictor."
+p1 = plot_marginal_surfaces(wh_strip(surface_exp3_joint_wh, "first")) + labs(title = "First layer")
+p2 = plot_marginal_surfaces(wh_strip(surface_exp3_joint_wh, "final")) + labs(title = "Final layer")
+(p1 / p2) + plot_layout(guides = "collect") & theme(legend.position = "right")
 ```
 
-## Polynomial joint model — first layer
+```{=latex}
+\clearpage
+\bibliography{references}
+\clearpage
+```
+
+\onecolumn
+
+# Appendix {.appendix}
+
+## Test Set Items
 
 ```{r}
-#| label: tbl-exp3-poly-joint-first
-#| tbl-cap: "Polynomial joint model (logit ~ freq + freq² + FTP + FTP² + freq:FTP) at the first layer for Whisper encoder and decoder. All predictors are centered and scaled. % > 0 = percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp3_poly_joint_first, digits = 3, row.names = FALSE)
+#| label: tbl-test-items
+#| tbl-pos: "H"
+#| tbl-cap: "Test set statistics for all experiments. Only items with a valid (non-zero) predictability estimate are included. Frequency is the raw corpus count; predictability is logit(FTP). BabyLM models (125M, 350M, 1.3B) share identical items and corpus statistics. Whisper encoder and decoder evaluate the same audio items with C4-derived corpus statistics."
+bind_rows(
+  olmo_items %>% mutate(Model = "OLMo-3 7B"),
+  blm_items  %>% mutate(Model = "BabyLM"),
+  wh_items_by_comp %>% filter(component == "encoder") %>% mutate(Model = "Whisper encoder"),
+  wh_items_by_comp %>% filter(component == "decoder") %>% mutate(Model = "Whisper decoder")
+) %>%
+  group_by(Model) %>%
+  summarise(
+    `N items`      = n(),
+    `Med. freq`    = as.integer(median(frequency)),
+    `Freq range`   = sprintf("%s--%s",
+                      format(min(frequency), big.mark = ","),
+                      format(max(frequency), big.mark = ",")),
+    `Med. predic.` = round(median(log_ftp, na.rm = TRUE), 2),
+    `Predic. range`= sprintf("%.2f--%.2f", min(log_ftp, na.rm = TRUE), max(log_ftp, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(Model = factor(Model, levels = c("OLMo-3 7B", "BabyLM",
+                                           "Whisper encoder", "Whisper decoder"))) %>%
+  arrange(Model) %>%
+  knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
-## Polynomial joint model — final layer
+## Experiment 1: UP Independently
 
 ```{r}
-#| label: tbl-exp3-poly-joint-final
-#| tbl-cap: "Polynomial joint model (logit ~ freq + freq² + FTP + FTP² + freq:FTP) at the final layer for Whisper encoder and decoder. All predictors are centered and scaled. % > 0 = percentage of posterior samples with a positive estimate."
-knitr::kable(tbl_exp3_poly_joint_final, digits = 3, row.names = FALSE)
+#| label: tbl-exp1-splits
+#| tbl-pos: "H"
+#| tbl-cap: "Classifier training and validation split sizes for Experiment 1 (UP independently). Positive (pos) = standalone *up*; negative (neg) = other alphabetic token from the same sentence."
+tibble::tribble(
+  ~Model,         ~`Train pos`, ~`Train neg`, ~`Val pos`, ~`Val neg`,
+  "OLMo-3 7B",   1000L,        1000L,        992L,       1000L,
+  "BabyLM 125M", 1000L,        1000L,        999L,       1000L,
+  "BabyLM 350M", 1000L,        1000L,        999L,       1000L,
+  "BabyLM 1.3B", 1000L,        1000L,        916L,       1000L
+) %>% knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, format.args = list(big.mark = ","))
 ```
-
-## Polynomial joint model — predicted surfaces
 
 ```{r}
-#| label: fig-exp3-poly-joint-surfaces
-#| fig-cap: "Predicted logit surfaces from the polynomial joint brms model at the first and final layers for Whisper encoder and decoder."
-wrap_plots(surfaces_to_plots(surface_exp3_poly_wh), ncol = 2)
+#| label: tbl-exp1-joint-first
+#| tbl-pos: "H"
+#| tbl-cap: "Joint frequency × FTP model at the first layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+knitr::kable(clean_brms_table(tbl_exp1_joint_first), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
-
-## Frequency effect across layers
 
 ```{r}
-#| label: fig-exp3-freq
-#| fig-cap: "Estimated frequency effect across layers for Whisper encoder and decoder. Ribbons show 80% and 95% confidence intervals."
-plot_freq_diff(ddata_freq_wh, ncol = 2)
+#| label: tbl-exp1-joint-final
+#| tbl-pos: "H"
+#| tbl-cap: "Joint frequency × FTP model at the final layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+knitr::kable(clean_brms_table(tbl_exp1_joint_final), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
-## FTP effect across layers
+\clearpage
+
+## Experiment 2: UP as Subword
 
 ```{r}
-#| label: fig-exp3-ftp
-#| fig-cap: "Estimated FTP effect across layers for Whisper encoder and decoder. Ribbons show 80% and 95% confidence intervals."
-plot_ftp_diff(ddata_ftp_wh, ncol = 2)
+#| label: tbl-exp2-splits
+#| tbl-pos: "H"
+#| tbl-cap: "Classifier training and validation split sizes for Experiment 2 (UP as subword). Positive examples: 1,000 standalone *up* + 1,000 unique up-within-word types. Negative examples: 1,000 from each sentence pool. Val sizes vary by model due to tokenizer coverage."
+tibble::tribble(
+  ~Model,         ~`Train standalone`, ~`Train subword`, ~`Train neg`, ~`Val rows`,
+  "OLMo-3 7B",   1000L,               1000L,            2000L,        3868L,
+  "BabyLM 125M", 1000L,               1000L,            2000L,        3582L,
+  "BabyLM 350M", 1000L,               1000L,            2000L,        3582L,
+  "BabyLM 1.3B", 1000L,               1000L,            2000L,        3773L
+) %>% knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, format.args = list(big.mark = ","))
 ```
+
+```{r}
+#| label: tbl-exp2-joint-first
+#| tbl-pos: "H"
+#| tbl-cap: "Joint frequency × FTP model at the first layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+knitr::kable(clean_brms_table(tbl_exp2_joint_first), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
+```
+
+```{r}
+#| label: tbl-exp2-joint-final
+#| tbl-pos: "H"
+#| tbl-cap: "Joint frequency × FTP model at the final layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+knitr::kable(clean_brms_table(tbl_exp2_joint_final), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
+```
+
+\clearpage
+
+## Experiment 3: Whisper
+
+```{r}
+#| label: tbl-exp3-splits
+#| tbl-pos: "H"
+#| tbl-cap: "Classifier training and validation split sizes for Experiment 3 (Whisper). Positive examples are *word_up* instances; negatives are random non-*up* alphabetic tokens from the same segment."
+wh_splits %>%
+  select(Component, `Train pos`, `Train neg`, `Val pos`, `Val neg`) %>%
+  knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, format.args = list(big.mark = ","))
+```
+
+```{r}
+#| label: tbl-exp3-joint-first
+#| tbl-pos: "H"
+#| tbl-cap: "Joint frequency × FTP model at the first layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+knitr::kable(clean_brms_table(tbl_exp3_joint_first), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
+```
+
+```{r}
+#| label: tbl-exp3-joint-final
+#| tbl-pos: "H"
+#| tbl-cap: "Joint frequency × FTP model at the final layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+knitr::kable(clean_brms_table(tbl_exp3_joint_final), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
+```
+
+\clearpage
