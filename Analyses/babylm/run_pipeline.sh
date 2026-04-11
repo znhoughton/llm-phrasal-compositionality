@@ -20,9 +20,9 @@ UPWORD_PKL="../Data/corpus_results_upwords.pkl"
 CORPUS_STATS_PKL="../Data/babylm_corpus_stats.pkl"
 
 declare -A MODELS=(
-  ["opt-125m"]="znhoughton/opt-babylm-125m-64eps-seed964"
-  ["opt-350m"]="znhoughton/opt-babylm-350m-64eps-seed964"
-  ["opt-1.3b"]="znhoughton/opt-babylm-1.3b-64eps-seed964"
+  ["opt-125m"]="znhoughton/opt-babylm-125m-20eps-seed964"
+  ["opt-350m"]="znhoughton/opt-babylm-350m-20eps-seed964"
+  ["opt-1.3b"]="znhoughton/opt-babylm-1.3b-20eps-seed964"
 )
 
 # If a tag is passed as argument, run only that model; otherwise run all three
