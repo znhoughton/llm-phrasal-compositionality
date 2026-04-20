@@ -88,9 +88,11 @@ BLM_FINAL_LAYER_MAP = list("opt-125m" = 11L, "opt-350m" = 23L, "opt-1.3b" = 23L)
 
 load_babylm_model = function(tag) {
   ui = read_csv(paste0('../Data/babylm/', tag, '/Data_up/all_layers_results.csv')) %>%
+    rename_with(~ sub("^ftp$", "predic", .)) %>%
     mutate(model = tag, log_freq = log(frequency), log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up)) %>%
     filter(!is.na(predic), is.finite(log_predic))
   us = read_csv(paste0('../Data/babylm/', tag, '/Data_upsubword/all_layers_results.csv')) %>%
+    rename_with(~ sub("^ftp$", "predic", .)) %>%
     mutate(model = tag, log_freq = log(frequency), log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up)) %>%
     filter(!is.na(predic), is.finite(log_predic))
   list(ui = ui, us = us)
