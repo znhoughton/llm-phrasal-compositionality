@@ -172,18 +172,18 @@ def load_datasets():
         ))
         vup_sentences_filtered[vup_type] = group["sentence"].tolist()
 
-    vup_ftp = {}
-    if "ftp" in test_df.columns:
-        vup_ftp = (
+    vup_predic = {}
+    if "predic" in test_df.columns:
+        vup_predic = (
             test_df.drop_duplicates("verb_up")
-            .set_index("verb_up")["ftp"]
+            .set_index("verb_up")["predic"]
             .to_dict()
         )
-        log.info("  FTP loaded for %d V+up types.", len(vup_ftp))
+        log.info("  Predictability loaded for %d V+up types.", len(vup_predic))
     else:
-        log.info("  No 'ftp' column in test.csv — FTP will be NaN in outputs.")
+        log.info("  No 'predic' column in test.csv — predictability will be NaN in outputs.")
 
-    return train_records, val_records, vup_positions, vup_sentences_filtered, vup_ftp
+    return train_records, val_records, vup_positions, vup_sentences_filtered, vup_predic
 
 
 # ---------------------------------------------------------------------------
@@ -354,22 +354,22 @@ def train_classifier(X_train, y_train, X_val, y_val):
 # EVALUATION
 # ---------------------------------------------------------------------------
 
-def evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_ftp, layer_idx):
+def evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_predic, layer_idx):
     rows = []
     for vup_type, embs in vup_embeddings.items():
-        X_scaled = scaler.transform(embs)
-        preds    = clf.predict(X_scaled)
-        probs    = clf.predict_proba(X_scaled)[:, 1]
-        logits   = clf.decision_function(X_scaled)
-        sents    = [sent for sent, _, _ in vup_positions[vup_type]]
-        ftp_val  = vup_ftp.get(vup_type, float("nan"))
+        X_scaled  = scaler.transform(embs)
+        preds     = clf.predict(X_scaled)
+        probs     = clf.predict_proba(X_scaled)[:, 1]
+        logits    = clf.decision_function(X_scaled)
+        sents     = [sent for sent, _, _ in vup_positions[vup_type]]
+        predic_val = vup_predic.get(vup_type, float("nan"))
 
         for j, (pred, prob, logit) in enumerate(zip(preds, probs, logits)):
             rows.append({
                 "layer":           layer_idx,
                 "verb_up":         vup_type,
                 "frequency":       vup_freq[vup_type],
-                "ftp":             ftp_val,
+                "predic":          predic_val,
                 "sentence":        sents[j] if j < len(sents) else "",
                 "classifier_pred": int(pred),
                 "up_probability":  round(float(prob), 4),
@@ -485,7 +485,7 @@ def main():
     n_layers = model.config.num_hidden_layers
     log.info("Will iterate over %d transformer layers (0 to %d)", n_layers, n_layers - 1)
 
-    train_records, val_records, vup_positions, vup_sentences_filtered, vup_ftp = load_datasets()
+    train_records, val_records, vup_positions, vup_sentences_filtered, vup_predic = load_datasets()
 
     with open(VUP_PKL_PATH, "rb") as f:
         _, vup_freq, _, _ = pickle.load(f)
@@ -528,7 +528,7 @@ def main():
             vup_positions, model, tokenizer, layer_idx
         )
 
-        layer_df = evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_ftp, layer_idx)
+        layer_df = evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_predic, layer_idx)
 
         csv_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}.csv")
         layer_df.to_csv(csv_path, index=False)

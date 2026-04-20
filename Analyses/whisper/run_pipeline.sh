@@ -12,7 +12,7 @@ set -euo pipefail
 
 DATA_DIR="../../Data/whisper"
 METADATA="../../Data/up-audio-metadata.csv"
-VUP_PKL="../../Data/corpus_results.pkl"
+CORPUS_STATS_PKL="../../Data/olmo_corpus_stats.pkl"
 MODEL="openai/whisper-small"
 DEVICE="cuda"
 
@@ -35,7 +35,7 @@ python run_whisper_classifier.py \
   --data-dir "$DATA_DIR" \
   --model    "$MODEL"    \
   --device   "$DEVICE"   \
-  --vup-pkl  "$VUP_PKL"
+  --corpus-stats-pkl "$CORPUS_STATS_PKL"
 
 echo ""
 echo "========================================"

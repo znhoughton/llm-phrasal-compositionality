@@ -1,61 +1,57 @@
 """
-OLMo Corpus Statistics (C4)
-============================
-Computes verb surface-form frequencies and Forward Transitional Probability
-(FTP) for the OLMo analysis, using the local C4 corpus.
+OLMo Corpus Statistics (Dolma via infini-gram)
+===============================================
+Computes verb surface-form frequencies and predictability
+for the OLMo analysis, using the infini-gram API on the Dolma corpus
+(index: v4_dolma-v1_7_llama).  OLMo 2 was trained on OLMo-Mix-1124, a
+Dolma-derived mix.
 
-    FTP("pick up") = count("pick up") / count("pick")
+    predictability("pick up") = count("pick up") / count("pick")
 
-V+up frequencies are loaded from the existing corpus_results.pkl (already
-computed by create_dataset.py). This script only adds the verb unigram
-counts needed for the FTP denominator, using a fast single pass (no spaCy).
+V+up types are loaded from corpus_results.pkl (produced by create_dataset.py).
+Bigram and unigram counts are fetched from the infini-gram API.
 
 Output saved to:
     ../Data/olmo_corpus_stats.pkl
-    (vup_freq, verb_freq, ftp)
+    (vup_freq, verb_freq, predic)
 
-    vup_freq  : Counter  {"pick up": 5000, ...}  (from corpus_results.pkl)
-    verb_freq : Counter  {"pick": 50000, ...}     (surface form, all contexts)
-    ftp       : dict     {"pick up": 0.10, ...}
+    vup_freq  : Counter  {"pick up": 5000, ...}  (counts from Dolma)
+    verb_freq : Counter  {"pick": 50000, ...}     (counts from Dolma)
+    predic    : dict     {"pick up": 0.10, ...}
 
 Usage:
-    python get_olmo_corpus_stats.py [--data-dir DIR] [--vup-pkl PATH]
+    python get_olmo_corpus_stats.py [--vup-pkl PATH] [--out-pkl PATH]
+                                    [--index INDEX] [--min-freq N]
+                                    [--delay SECONDS]
 
 Requires:
-    pip install pyarrow
+    pip install requests tqdm
 """
 
 import argparse
 import collections
-import glob
 import logging
-import os
 import pickle
-import re
+import time
 
-import pyarrow as pa
-import pyarrow.ipc as ipc
+import requests
 from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
-MIN_FREQ = 10
+API_URL   = "https://api.infini-gram.io/"
+# Dolma v1.7 indexed with the LLaMA tokenizer.
+DEFAULT_INDEX = "v4_dolma-v1_7_llama"
+MIN_FREQ      = 10
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-TOKEN_RE = re.compile(r"[a-z']+", re.IGNORECASE)
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Compute verb frequencies and FTP from local C4 corpus."
-    )
-    parser.add_argument(
-        "--data-dir",
-        default="../c4_10B_2B_local/train",
-        help="Path to local C4 arrow files. Default: ../c4_10B_2B_local/train",
+        description="Compute V+up frequencies and predictability from Dolma via infini-gram."
     )
     parser.add_argument(
         "--vup-pkl",
@@ -68,83 +64,107 @@ def parse_args():
         default="../Data/olmo_corpus_stats.pkl",
         help="Output path. Default: ../Data/olmo_corpus_stats.pkl",
     )
+    parser.add_argument(
+        "--index",
+        default=DEFAULT_INDEX,
+        help=f"infini-gram index to query. Default: {DEFAULT_INDEX}",
+    )
+    parser.add_argument(
+        "--min-freq",
+        type=int,
+        default=MIN_FREQ,
+        help=f"Minimum V+up count to include. Default: {MIN_FREQ}",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.5,
+        help="Seconds to wait between API requests (default: 0.5).",
+    )
     return parser.parse_args()
 
 
-def get_arrow_files(data_dir):
-    files = sorted(glob.glob(os.path.join(data_dir, "**/*.arrow"), recursive=True))
-    return [f for f in files if "data-" in os.path.basename(f)]
+RATE_LIMIT_COOLDOWN = 60  # seconds to pause after any 403 before retrying
 
 
-def read_arrow(filepath):
-    try:
-        with pa.memory_map(filepath, "r") as source:
-            return ipc.open_stream(source).read_all()
-    except pa.lib.ArrowInvalid:
-        with pa.memory_map(filepath, "r") as source:
-            return ipc.open_file(source).read_all()
-
-
-def count_verb_freq_from_arrow(arrow_files, target_verbs):
-    verb_freq = collections.Counter()
-
-    log.info("Counting verb surface-form frequencies across %d arrow files ...", len(arrow_files))
-    for filepath in tqdm(arrow_files, desc="Arrow files", unit="file"):
-        table = read_arrow(filepath)
-        for text in table.column("text").to_pylist():
-            if not text:
+def infigram_count(query: str, index: str, session: requests.Session) -> int:
+    """Return the raw count of `query` in the given infini-gram index."""
+    payload = {"index": index, "query_type": "count", "query": query}
+    for attempt in range(5):
+        try:
+            r = session.post(API_URL, json=payload, timeout=30)
+            if r.status_code == 403:
+                log.warning("Rate limited on %r (attempt %d) — cooling down for %ds",
+                            query, attempt + 1, RATE_LIMIT_COOLDOWN)
+                time.sleep(RATE_LIMIT_COOLDOWN)
                 continue
-            for token in TOKEN_RE.findall(text.lower()):
-                if token in target_verbs:
-                    verb_freq[token] += 1
-
-    log.info("Verb freq pass done. %d distinct verbs counted.", len(verb_freq))
-    return verb_freq
+            r.raise_for_status()
+            data = r.json()
+            if "error" in data:
+                log.warning("API error for %r: %s", query, data["error"])
+                return 0
+            return data.get("count", 0)
+        except (requests.RequestException, ValueError) as e:
+            wait = 2 ** (attempt + 2)  # 4, 8, 16, 32, 64s
+            log.warning("Request failed for %r (attempt %d): %s — retrying in %ds",
+                        query, attempt + 1, e, wait)
+            time.sleep(wait)
+    log.error("Giving up on %r after 5 attempts — cooling down for %ds before next query.",
+              query, RATE_LIMIT_COOLDOWN)
+    time.sleep(RATE_LIMIT_COOLDOWN)
+    return 0
 
 
 def main():
     args = parse_args()
 
-    log.info("Loading V+up frequencies from %s ...", args.vup_pkl)
+    log.info("Loading V+up types from %s ...", args.vup_pkl)
     with open(args.vup_pkl, "rb") as f:
-        _, vup_freq, _, _ = pickle.load(f)
-    log.info("  V+up types loaded: %d", len(vup_freq))
+        _, vup_freq_pkl, _, _ = pickle.load(f)
 
-    # Only count verbs we need for FTP
-    target_verbs = {
-        vup_type.split()[0]
-        for vup_type, cnt in vup_freq.items()
-        if cnt >= MIN_FREQ
-    }
-    log.info("Target verbs to count: %d", len(target_verbs))
+    # Use the V+up types from the pkl as the candidate set (they were identified
+    # from C4 sentence scans); counts will come from Dolma via infini-gram.
+    candidate_types = [t for t, c in vup_freq_pkl.items() if c >= args.min_freq]
+    target_verbs    = sorted({t.split()[0] for t in candidate_types})
+    log.info("V+up types to query: %d  |  unique verbs: %d",
+             len(candidate_types), len(target_verbs))
 
-    arrow_files = get_arrow_files(args.data_dir)
-    log.info("Found %d arrow files in %s", len(arrow_files), args.data_dir)
+    session = requests.Session()
 
-    verb_freq = count_verb_freq_from_arrow(arrow_files, target_verbs)
+    # --- Bigram counts (V+up) ---
+    log.info("Fetching bigram counts from infini-gram [index=%s] ...", args.index)
+    vup_freq = collections.Counter()
+    for vup_type in tqdm(candidate_types, desc="Bigram counts"):
+        vup_freq[vup_type] = infigram_count(vup_type, args.index, session)
+        time.sleep(args.delay)
 
-    # Compute FTP
-    ftp = {}
+    # --- Unigram counts (verbs) ---
+    log.info("Fetching unigram counts ...")
+    verb_freq = collections.Counter()
+    for verb in tqdm(target_verbs, desc="Unigram counts"):
+        verb_freq[verb] = infigram_count(verb, args.index, session)
+        time.sleep(args.delay)
+
+    # --- predictability ---
+    predic = {}
     n_missing = 0
-    for vup_type, cnt in vup_freq.items():
-        if cnt < MIN_FREQ:
-            continue
-        verb = vup_type.split()[0]
+    for vup_type in candidate_types:
+        verb  = vup_type.split()[0]
         denom = verb_freq.get(verb, 0)
-        if denom > 0:
-            ftp[vup_type] = cnt / denom
+        if denom > 0 and vup_freq[vup_type] > 0:
+            predic[vup_type] = vup_freq[vup_type] / denom
         else:
             n_missing += 1
 
-    log.info("FTP computed for %d V+up types (%d skipped — verb not in corpus)",
-             len(ftp), n_missing)
-    log.info("Top 10 V+up types by frequency:")
+    log.info("Predictability computed for %d V+up types (%d skipped — zero count).",
+             len(predic), n_missing)
+    log.info("Top 10 V+up types by Dolma frequency:")
     for vup_type, cnt in vup_freq.most_common(10):
-        ftp_val = ftp.get(vup_type, float("nan"))
-        log.info("  %-25s  freq=%8d  FTP=%.4f", vup_type, cnt, ftp_val)
+        predic_val = predic.get(vup_type, float("nan"))
+        log.info("  %-25s  freq=%8d  predictability=%.4f", vup_type, cnt, predic_val)
 
     with open(args.out_pkl, "wb") as f:
-        pickle.dump((vup_freq, verb_freq, ftp), f)
+        pickle.dump((vup_freq, verb_freq, predic), f)
     log.info("Saved to %s", args.out_pkl)
 
 
