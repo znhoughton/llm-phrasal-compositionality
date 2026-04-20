@@ -8,13 +8,14 @@ distinguish standalone "up" tokens from random other tokens. The classifier's
 decision logit is used as a proxy for compositionality: high-frequency, idiomatic
 types (e.g. *end up*) should look less like standalone "up", while low-frequency,
 transparent types should look more like it. Analyses examine how this signal
-varies as a function of corpus frequency and Forward Transitional Probability
-(FTP = P(up|V)) across layers. The predictability predictor used in all models
-is the **log-odds of FTP**: log(FTP / (1 − FTP)) = log(count(V+up) /
+varies as a function of corpus frequency and predictability
+(P(up|V)) across layers. The predictability predictor used in all models
+is the **log-odds of predictability**: log(P(up|V) / (1 − P(up|V))) = log(count(V+up) /
 (count(V) − count(V+up))).
 
-Corpus statistics are matched to each model's training distribution: OLMo and
-Whisper use C4; BabyLM models use the BabyLM training corpus.
+Corpus statistics are matched to each model's training distribution: OLMo-3 and
+Whisper use Dolma v1.7 (queried via the infini-gram API); BabyLM models use the
+BabyLM training corpus.
 
 **Classifier design**: A separate logistic regression classifier is trained at
 each layer independently. The classifier trained at layer *L* is then applied to
@@ -47,8 +48,8 @@ llm-phrasal-compositionality/
 │   ├── create_train_val_test.py       # Tokenize + build train/val/test CSVs
 │   ├── up_independently.py            # Layer-by-layer classifier (standalone up)
 │   ├── subwords_containing_up.py      # Layer-by-layer classifier (up subword)
-│   ├── get_olmo_corpus_stats.py       # Compute verb frequencies + FTP from C4
-│   ├── get_babylm_corpus_stats.py     # Compute verb frequencies + FTP from BabyLM corpus
+│   ├── get_olmo_corpus_stats.py       # Compute verb frequencies + predictability from Dolma v1.7 (infini-gram API)
+│   ├── get_babylm_corpus_stats.py     # Compute verb frequencies + predictability from BabyLM corpus
 │   ├── check_whisper_corpus.py        # Check speech corpus data sufficiency
 │   ├── analysis-script.Rmd            # Unified R analysis (params: source = "olmo"|"babylm"|"whisper")
 │   ├── olmo-3-7b/
@@ -62,9 +63,9 @@ llm-phrasal-compositionality/
 ├── Data/
 │   ├── corpus_results.pkl             # V+up + standalone-up sentences (from C4)
 │   ├── corpus_results_upwords.pkl     # up-within-word sentences (from C4)
-│   ├── olmo_corpus_stats.pkl          # OLMo verb frequencies + FTP (from C4)
-│   ├── babylm_corpus_stats.pkl        # BabyLM verb frequencies + FTP (from BabyLM corpus)
-│   ├── ftp_lookup.csv                 # FTP values for all V+up types (from C4; used by OLMo + Whisper R analysis)
+│   ├── olmo_corpus_stats.pkl          # OLMo verb frequencies + predictability (from Dolma v1.7)
+│   ├── babylm_corpus_stats.pkl        # BabyLM verb frequencies + predictability (from BabyLM corpus)
+│   ├── ftp_lookup.csv                 # Predictability values for all V+up types (from Dolma v1.7; used by OLMo + Whisper R analysis)
 │   ├── up-audio-metadata.csv          # Audio segment metadata (mixed sources; word+up occurrences)
 │   ├── olmo-3-7b/
 │   │   ├── Data_up/                   # OLMo results: standalone-up classifier
@@ -101,33 +102,32 @@ llm-phrasal-compositionality/
 
 ## Corpus statistics and predictor definitions
 
-Each model's frequency and FTP values come from the corpus that best reflects
+Each model's frequency and predictability values come from the corpus that best reflects
 its training distribution:
 
-| Model family | Frequency source | FTP source |
+| Model family | Frequency source | Predictability source |
 |---|---|---|
-| OLMo-3 7B | C4 (`olmo_corpus_stats.pkl`) | C4 (`ftp_lookup.csv`) |
+| OLMo-3 7B | Dolma v1.7 (`olmo_corpus_stats.pkl`) | Dolma v1.7 (`ftp_lookup.csv`) |
 | BabyLM OPT-* | BabyLM corpus (`babylm_corpus_stats.pkl`) | BabyLM corpus |
-| Whisper-small | C4 (`corpus_results.pkl`) | C4 (`ftp_lookup.csv`) |
+| Whisper-small | Dolma v1.7 (`olmo_corpus_stats.pkl`) | Dolma v1.7 (`ftp_lookup.csv`) |
 
 **Frequency** is the raw count of each V+up type in the relevant corpus,
 log-transformed before use: log(count(V+up)).
 
-**Predictability** is the Forward Transitional Probability FTP = P(up | V) =
-count(V+up) / count(V), entered as its log-odds:
+**Predictability** is P(up | V) = count(V+up) / count(V), entered as its log-odds:
 
 ```
-log-odds(FTP) = log( count(V+up) / (count(V) − count(V+up)) )
-              = log( FTP / (1 − FTP) )
+log-odds(predictability) = log( count(V+up) / (count(V) − count(V+up)) )
+                         = log( P(up|V) / (1 − P(up|V)) )
 ```
 
 This measures the odds that "up" follows verb V versus all other continuations
-of V. Only V+up types with a valid (non-null) FTP value are included in the
+of V. Only V+up types with a valid (non-null) predictability value are included in the
 analysis, ensuring that the same item set is used for both the frequency and
 predictability models.
 
 The `ftp_lookup.csv` file is generated from `olmo_corpus_stats.pkl` and shared
-between the OLMo and Whisper R analyses. BabyLM reads FTP directly from its
+between the OLMo and Whisper R analyses. BabyLM reads predictability directly from its
 own result CSVs (populated during pipeline step 1).
 
 ---
@@ -148,19 +148,17 @@ python create_dataset.py
 # → Data/corpus_results_upwords.pkl
 ```
 
-### Step 2 — Compute OLMo corpus stats + FTP *(one-time)*
+### Step 2 — Compute OLMo corpus stats + predictability *(one-time)*
 
-Counts verb surface-form frequencies in C4 and computes Forward Transitional
-Probability FTP = count(V+up) / count(V) for each V+up type.
+Queries Dolma v1.7 via the infini-gram API to obtain verb surface-form frequencies
+and computes predictability = count(V+up) / count(V) for
+each V+up type. Requires internet access; no local corpus files needed.
 
 ```bash
 cd Analyses/
 python get_olmo_corpus_stats.py
 # → Data/olmo_corpus_stats.pkl
 ```
-
-> Requires the local C4 arrow files (default path: `../c4_10B_2B_local/train`).
-> Pass `--data-dir` to override.
 
 ### Steps 3–5 — Run classifiers *(GPU required)*
 
@@ -171,7 +169,7 @@ bash run_pipeline.sh
 
 This runs three steps in sequence:
 1. `create_train_val_test.py` — tokenizes sentences and writes `train.csv`,
-   `val.csv`, `test.csv` (with `ftp` column) to `Data/olmo-3-7b/Data_up/` and
+   `val.csv`, `test.csv` (with `predic` column) to `Data/olmo-3-7b/Data_up/` and
    `Data/olmo-3-7b/Data_upsubword/`
 2. `up_independently.py` — layer-by-layer standalone-up classifier; writes
    `layer_XX.csv`, `layer_XX_plot.png`, `all_layers_results.csv` to `Data_up/`
@@ -194,16 +192,16 @@ in the YAML header, and knit. Fitted model objects are cached in `model_cache/ol
 
 The analysis covers:
 - Effect of **frequency** on logit at first/final layer (brms linear + bam non-linear)
-- Effect of **FTP** (predictability) on logit at first/final layer
-- **Joint** frequency + FTP effects
+- Effect of **predictability** on logit at first/final layer
+- **Joint** frequency + predictability effects
 - All three above **across all layers** using `te()` tensor-product smooths
-- 3D surface plots of predicted logit as a function of frequency × layer, FTP × layer, and frequency × FTP
+- 3D surface plots of predicted logit as a function of frequency × layer, predictability × layer, and frequency × predictability
 
 ---
 
 ## Full pipeline — BabyLM OPT models
 
-### Step 1 — Compute BabyLM corpus stats + FTP *(one-time)*
+### Step 1 — Compute BabyLM corpus stats + predictability *(one-time)*
 
 Downloads `znhoughton/babylm-150m-v3` from HuggingFace (11.5M documents),
 runs two passes: spaCy POS-tagging for V+up counts, then fast regex for verb
@@ -278,8 +276,8 @@ python subwords_containing_up.py \
 | File | Description |
 |---|---|
 | `train.csv`, `val.csv` | Training/validation sets (sentence, token_position, label) |
-| `test.csv` | Test set with `verb_up`, `frequency`, `ftp`, `sentence`, `token_position` |
-| `layer_XX.csv` | Per-sentence classifier outputs at layer XX (logit, probability, ftp) |
+| `test.csv` | Test set with `verb_up`, `frequency`, `predic`, `sentence`, `token_position` |
+| `layer_XX.csv` | Per-sentence classifier outputs at layer XX (logit, probability, predic) |
 | `layer_XX_plot.png` | Scatter + bar plot of compositionality at layer XX |
 | `all_layers_results.csv` | Concatenation of all `layer_XX.csv` files — input to R |
 | `layer_metadata.json` | Model info, layer count, train/val sample sizes |
@@ -321,8 +319,8 @@ mirroring the design of Experiments 1 and 2 (OLMo/BabyLM):
   criterion used in Experiments 1 and 2, with a minimum duration of 20 ms.
 - **Test**: V+up phrasal verb embeddings from qualifying types (≥5 occurrences
   in the audio dataset; a lower threshold than Experiments 1 and 2, reflecting
-  sparser audio coverage). The `frequency` column in output CSVs uses C4 corpus
-  counts (passed via `--vup-pkl`) consistent with the text-based experiments.
+  sparser audio coverage). The `frequency` column in output CSVs uses Dolma corpus
+  counts (passed via `--corpus-stats-pkl`) consistent with the text-based experiments.
 
 For **efficiency**, embeddings at all layers are extracted in a **single Whisper
 forward pass per segment** (not one pass per layer). The per-layer training
@@ -361,7 +359,7 @@ Or run the classifier directly:
 
 ```bash
 python run_whisper_classifier.py \
-  --vup-pkl ../../Data/corpus_results.pkl   # uses C4 frequencies for the frequency column
+  --corpus-stats-pkl ../../Data/olmo_corpus_stats.pkl   # uses Dolma frequencies for the frequency column
 # → ../../Data/whisper/encoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
 # → ../../Data/whisper/decoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
 ```
@@ -417,22 +415,22 @@ The test set is shared across both experiments. OLMo-3 7B and BabyLM models use
 the same underlying V+up sentences; only the tokenization and corpus statistics
 differ.
 
-| Model | Test sentences | Unique V+up types | Types w/ valid FTP | Sents/type (median) |
+| Model | Test sentences | Unique V+up types | Types w/ valid predic. | Sents/type (median) |
 |---|---|---|---|---|
 | OLMo-3 7B | 81,586 | 4,082 | 3,927 | 20 |
 | BabyLM 125M | 81,543 | 4,082 | 1,039 | 20 |
 | BabyLM 350M | 81,543 | 4,082 | 1,039 | 20 |
 | BabyLM 1.3B | 80,425 | 4,081 | 1,039 | 20 |
 
-BabyLM has fewer types with a valid FTP because the BabyLM training corpus
-(~100M words) is much smaller than C4, so many low-frequency V+up types have no
+BabyLM has fewer types with a valid predictability estimate because the BabyLM training corpus
+(~100M words) is much smaller than Dolma, so many low-frequency V+up types have no
 BabyLM verb-frequency entry.
 
-**Item-level frequency and FTP (unique V+up types with valid FTP):**
+**Item-level frequency and predictability (unique V+up types with valid predic.):**
 
-| Model | N items | Median freq | Freq range | Median FTP | FTP range | Med logit(FTP) |
+| Model | N items | Median freq | Freq range | Median predic. | Predic. range | Med logit(predic.) |
 |---|---|---|---|---|---|---|
-| OLMo-3 7B (C4) | 3,927 | 92 | 20 – 390,086 | 0.0046 | 0.00003 – 0.980 | −5.38 |
+| OLMo-3 7B (Dolma v1.7) | 3,927 | 92 | 20 – 390,086 | 0.0046 | 0.00003 – 0.980 | −5.38 |
 | BabyLM (BabyLM corpus) | 1,039 | 920 | 20 – 390,086 | 0.0325 | 0.00003 – 0.880 | −3.38 |
 
 ### Whisper audio dataset (Experiment 3)
@@ -448,7 +446,7 @@ BabyLM verb-frequency entry.
 | Val positives (*word_up*) | 1,000 |
 | Sentences per qualifying type (median / range) | 16 / 5–20 |
 
-FTP and C4 frequency for the 1,466 qualifying test types are joined from
+Predictability and Dolma frequency for the 1,466 qualifying test types are joined from
 `ftp_lookup.csv` in the R analysis.
 
 ---

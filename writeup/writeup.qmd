@@ -65,12 +65,12 @@ uo_colors = c("#007030", "#C9A92C", "#104735")
 
 clean_brms_table = function(df) {
   param_labels = c(
-    "Intercept"            = "Intercept",
-    "c_log_freq"           = "Freq",
-    "c_log_ftp"            = "Predic.",
-    "Ic_log_freqE2"        = "Freq\u00b2",
-    "Ic_log_ftpE2"         = "Predic.\u00b2",
-    "c_log_freq:c_log_ftp" = "Freq:Predic."
+    "Intercept"                = "Intercept",
+    "c_log_freq"               = "Freq",
+    "c_log_predic"             = "Predic.",
+    "Ic_log_freqE2"            = "Freq\u00b2",
+    "Ic_log_predicE2"          = "Predic.\u00b2",
+    "c_log_freq:c_log_predic"  = "Freq:Predic."
   )
   df %>%
     mutate(
@@ -89,13 +89,13 @@ plot_marginal_surfaces = function(df) {
     mutate(label = factor(label, levels = unique(label))) %>%
     group_by(label) %>%
     group_modify(function(sub, key) {
-      ftp_mid  = sub$c_log_ftp[which.min(abs(sub$c_log_ftp))]
-      freq_mid = sub$c_log_freq[which.min(abs(sub$c_log_freq))]
+      predic_mid = sub$c_log_predic[which.min(abs(sub$c_log_predic))]
+      freq_mid   = sub$c_log_freq[which.min(abs(sub$c_log_freq))]
       bind_rows(
-        sub %>% filter(abs(c_log_ftp  - ftp_mid)  < 1e-9) %>%
-          transmute(x = c_log_freq * freq_sd + freq_mean, fit, panel = "Frequency"),
-        sub %>% filter(abs(c_log_freq - freq_mid) < 1e-9) %>%
-          transmute(x = c_log_ftp  * ftp_sd  + ftp_mean,  fit, panel = "Predictability")
+        sub %>% filter(abs(c_log_predic - predic_mid) < 1e-9) %>%
+          transmute(x = c_log_freq   * freq_sd   + freq_mean,   fit, panel = "Frequency"),
+        sub %>% filter(abs(c_log_freq - freq_mid)    < 1e-9) %>%
+          transmute(x = c_log_predic * predic_sd + predic_mean, fit, panel = "Predictability")
       )
     }) %>%
     ungroup() %>%
@@ -126,13 +126,13 @@ wh_strip = function(df, layer) {
 
 Placeholder reference: @houghton2020perceptualconsequencespauses.
 
-The classifier was trained to distinguish the hidden-state representation of the particle *up* from representations of other tokens in the same sentence. Positive training examples consisted of 1,000 occurrences of standalone *up* (i.e., functioning as a verbal particle, as in *pick up*), drawn from sentences in the C4 corpus. Negative examples were 1,000 tokens randomly selected from the same sentences, restricted to tokens whose decoded string consists entirely of alphabetic characters (no numbers, punctuation, or special characters), and excluding *up* itself and any token containing *up* as a substring. The validation set was constructed identically from a non-overlapping set of sentences (targeting 1,000 positive, 1,000 negative; exact counts vary slightly by model depending on how many sentences yield a valid token position under each tokenizer — see @tbl-exp1-splits).
+The classifier was trained to distinguish the hidden-state representation of the preposition *up* from representations of other tokens in the same sentence. Positive training examples consisted of 1,000 occurrences of standalone *up* (i.e., functioning as a verbal particle, as in *pick up*), drawn from sentences in the C4 corpus. Negative examples were 1,000 tokens randomly selected from the same sentences, restricted to tokens whose decoded string consists entirely of alphabetic characters (no numbers, punctuation, or special characters), and excluding the preposition *up* itself and any token containing *up* as a substring. The validation set was drawn from the same source sentence pool (a non-overlapping subset), with token positions resolved per model's tokenizer; exact counts fall slightly below 1,000 for some models because *up* is not a standalone BPE token in every sentence under every tokenizer — see @tbl-exp1-splits.
 
-The classifiers targeting OLMo-3 7B and the BabyLM models were trained on the **same underlying sentences**, but the frequency and predictability statistics used in the analyses were derived from the respective corpus for each model (the C4 corpus for the OLMo model and the BabyLM corpus for the BabyLM models). In other words, the training sentences were identical across models, but the tokenization and corpus statistics varied.
+The classifiers targeting OLMo-3 7B and the BabyLM models were trained on the **same underlying sentences**, but the frequency and predictability statistics used in the analyses were derived from the respective corpus for each model (Dolma v1.7 for OLMo-3 7B, queried via the infini-gram API; and the BabyLM training corpus for the BabyLM models). In other words, the training sentences were identical across models, but the tokenization and corpus statistics varied.
 
-Classifier training and validation split sizes are shown in @tbl-exp1-splits (Appendix). The test set comprised verb–*up* phrasal verb types (e.g., *pick up*, *set up*) with at least 20 occurrences in the corpus; up to 20 sentences were sampled per type. Corpus frequency and forward transitional probability (FTP; $P(\text{up} \mid V)$) were derived from the corpus matched to each model's training distribution. Because the BabyLM corpus is smaller than C4, fewer V+up types attain a valid (non-zero) FTP estimate under BabyLM statistics; only types with a valid FTP are included in the analyses. Full item-level statistics are reported in @tbl-test-items (Appendix).
+Classifier training and validation split sizes are shown in @tbl-exp1-splits (Appendix). The test set comprised verb–*up* phrasal verb types (e.g., *pick up*, *set up*) with at least 20 occurrences in the corpus; up to 20 sentences were sampled per type. Corpus frequency and predictability ($P(\text{up} \mid V)$) were derived from the corpus matched to each model's training distribution. Because the BabyLM corpus is smaller than Dolma, fewer V+up types attain a valid (non-zero) predictability estimate under BabyLM statistics; only types with a valid predictability estimate are included in the analyses. Full item-level statistics are reported in @tbl-test-items (Appendix).
 
-For OLMo-3 7B, 3,927 unique V+*up* types were included, with a median corpus frequency of 92 (range: 20–390,086) and a median logit(FTP) of $-5.38$ (range: $-10.42$–$3.87$). The BabyLM models shared 1,039 items; these items had a higher median frequency (920) and higher median logit(FTP) ($-3.40$) under BabyLM-corpus statistics, reflecting the smaller and more concentrated vocabulary of the BabyLM training data.
+For OLMo-3 7B, 3,927 unique V+*up* types were included, with a median corpus frequency of 92 (range: 20–390,086) and a median logit(predictability) of $-5.38$ (range: $-10.42$–$3.87$). The BabyLM models shared 1,039 items; these items had a higher median frequency (920) and higher median logit(predictability) ($-3.40$) under BabyLM-corpus statistics, reflecting the smaller and more concentrated vocabulary of the BabyLM training data.
 
 ## Joint model — predicted surfaces (linear)
 
@@ -155,7 +155,7 @@ p2 = plot_marginal_surfaces(blm_strip(surface_exp1_joint_blm, "final")) + labs(t
 
 ## Items
 
-The training set for this experiment combined two types of positive example: 1,000 occurrences of standalone *up* (identical to Experiment 1) and 1,000 occurrences of *up* embedded within a larger word (e.g., *update*, *upon*, *setup*). Critically, the subword positives were restricted to **unique word types**: each up-containing word form contributed exactly one instance, so the classifier could not learn to recognise a high-frequency form like *setup* from repeated exposure. Negative examples (1,000 drawn from each sentence pool) were tokens consisting entirely of alphabetic characters that did not contain *up* as a substring. The validation set was constructed by the same procedure (targeting 1,000 positive, 1,000 negative per sentence pool; exact counts vary by tokenizer — see @tbl-exp2-splits). As in Experiment 1, OLMo-3 7B and BabyLM models used the same underlying sentences with their own tokenizers, and BabyLM models used BabyLM-corpus statistics for frequency and FTP. The test set was identical to Experiment 1: all verb–*up* phrasal verb types with at least 20 corpus occurrences, sampled at up to 20 sentences per type.
+The training set for this experiment combined two types of positive example: 1,000 occurrences of standalone *up* (identical to Experiment 1) and 1,000 occurrences of *up* embedded within a larger word (e.g., *update*, *upon*, *setup*). Critically, the subword positives were restricted to **unique word types**: each up-containing word form contributed exactly one instance, so the classifier could not learn to recognise a high-frequency form like *setup* from repeated exposure. Negative examples (1,000 drawn from each sentence pool) were tokens consisting entirely of alphabetic characters that did not contain *up* as a substring. The validation set was constructed by the same procedure (targeting 1,000 positive, 1,000 negative per sentence pool; exact counts vary by tokenizer — see @tbl-exp2-splits). As in Experiment 1, OLMo-3 7B and BabyLM models used the same underlying sentences with their own tokenizers, and BabyLM models used BabyLM-corpus statistics for frequency and predictability. The test set was identical to Experiment 1: all verb–*up* phrasal verb types with at least 20 corpus occurrences, sampled at up to 20 sentences per type.
 
 Classifier training and validation split sizes are shown in @tbl-exp2-splits (Appendix). The OLMo training set contained 1,000 unique up-within-word types; BabyLM models similarly contributed 1,000 unique types, with the exact set varying by tokenizer. Validation-set sizes differ slightly across models because some sentences could not be resolved to a valid token position under each model's tokenizer. The test set is identical to Experiment 1; item-level statistics are shown in @tbl-test-items.
 
@@ -184,7 +184,7 @@ The Whisper experiment used spoken language data drawn from a mixed-source audio
 
 The **training and validation sets** used 1,000 *word_up* instances each as positive examples, paired with 1,000 randomly selected non-*up* words from the same segment as negative examples. This mirrors the standalone-*up* training design of Experiments 1 and 2. Negative words were restricted to those whose string consists entirely of alphabetic characters (matching the `token.isalpha()` criterion used in Experiments 1 and 2), with a minimum duration of 20 ms. Training and validation segments were non-overlapping.
 
-The **test set** comprised V+up phrasal verb types with at least 5 occurrences in the audio dataset, yielding 1,466 qualifying types, with up to 20 instances per type (median: 16 sentences per type; range: 5–20). The minimum-occurrence threshold is lower than in Experiments 1 and 2 (which required at least 20 corpus sentences per type), reflecting the sparser coverage of audio relative to written text. Corpus frequency and FTP values were drawn from the C4-derived lookup table used in Experiments 1 and 2. Classifier training and validation split sizes are shown in @tbl-exp3-splits (Appendix) and full item-level statistics are shown in @tbl-test-items (Appendix). After filtering to types with a valid C4 FTP estimate, 1,397 unique V+*up* types were retained for both encoder and decoder, with a median corpus frequency of 683 (range: 20–390,086) and a median logit(FTP) of $-4.05$ (range: $-10.42$–$3.87$).
+The **test set** comprised V+up phrasal verb types with at least 5 occurrences in the audio dataset, yielding 1,466 qualifying types, with up to 20 instances per type (median: 16 sentences per type; range: 5–20). The minimum-occurrence threshold is lower than in Experiments 1 and 2 (which required at least 20 corpus sentences per type), reflecting the sparser coverage of audio relative to written text. Corpus frequency and predictability values were drawn from the C4-derived lookup table used in Experiments 1 and 2. Classifier training and validation split sizes are shown in @tbl-exp3-splits (Appendix) and full item-level statistics are shown in @tbl-test-items (Appendix). After filtering to types with a valid C4 predictability estimate, 1,397 unique V+*up* types were retained for both encoder and decoder, with a median corpus frequency of 683 (range: 20–390,086) and a median logit(predictability) of $-4.05$ (range: $-10.42$–$3.87$).
 
 ## Joint model — predicted surfaces (linear)
 
@@ -211,7 +211,7 @@ p2 = plot_marginal_surfaces(wh_strip(surface_exp3_joint_wh, "final")) + labs(tit
 ```{r}
 #| label: tbl-test-items
 #| tbl-pos: "H"
-#| tbl-cap: "Test set statistics for all experiments. Only items with a valid (non-zero) predictability estimate are included. Frequency is the raw corpus count; predictability is logit(FTP). BabyLM models (125M, 350M, 1.3B) share identical items and corpus statistics. Whisper encoder and decoder evaluate the same audio items with C4-derived corpus statistics."
+#| tbl-cap: "Test set statistics for all experiments. Only items with a valid (non-zero) predictability estimate are included. Frequency is the raw corpus count; predictability is logit(predictability). BabyLM models (125M, 350M, 1.3B) share identical items and corpus statistics. Whisper encoder and decoder evaluate the same audio items with Dolma-derived frequency counts."
 bind_rows(
   olmo_items %>% mutate(Model = "OLMo-3 7B"),
   blm_items  %>% mutate(Model = "BabyLM"),
@@ -225,8 +225,8 @@ bind_rows(
     `Freq range`   = sprintf("%s--%s",
                       format(min(frequency), big.mark = ","),
                       format(max(frequency), big.mark = ",")),
-    `Med. predic.` = round(median(log_ftp, na.rm = TRUE), 2),
-    `Predic. range`= sprintf("%.2f--%.2f", min(log_ftp, na.rm = TRUE), max(log_ftp, na.rm = TRUE)),
+    `Med. predic.` = round(median(log_predic, na.rm = TRUE), 2),
+    `Predic. range`= sprintf("%.2f--%.2f", min(log_predic, na.rm = TRUE), max(log_predic, na.rm = TRUE)),
     .groups = "drop"
   ) %>%
   mutate(Model = factor(Model, levels = c("OLMo-3 7B", "BabyLM",
@@ -253,14 +253,14 @@ tibble::tribble(
 ```{r}
 #| label: tbl-exp1-joint-first
 #| tbl-pos: "H"
-#| tbl-cap: "Joint frequency × FTP model at the first layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+#| tbl-cap: "Joint frequency × predictability model at the first layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
 knitr::kable(clean_brms_table(tbl_exp1_joint_first), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
 ```{r}
 #| label: tbl-exp1-joint-final
 #| tbl-pos: "H"
-#| tbl-cap: "Joint frequency × FTP model at the final layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+#| tbl-cap: "Joint frequency × predictability model at the final layer for UP independently. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
 knitr::kable(clean_brms_table(tbl_exp1_joint_final), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
@@ -284,14 +284,14 @@ tibble::tribble(
 ```{r}
 #| label: tbl-exp2-joint-first
 #| tbl-pos: "H"
-#| tbl-cap: "Joint frequency × FTP model at the first layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+#| tbl-cap: "Joint frequency × predictability model at the first layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
 knitr::kable(clean_brms_table(tbl_exp2_joint_first), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
 ```{r}
 #| label: tbl-exp2-joint-final
 #| tbl-pos: "H"
-#| tbl-cap: "Joint frequency × FTP model at the final layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+#| tbl-cap: "Joint frequency × predictability model at the final layer for UP as subword. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
 knitr::kable(clean_brms_table(tbl_exp2_joint_final), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
@@ -311,14 +311,14 @@ wh_splits %>%
 ```{r}
 #| label: tbl-exp3-joint-first
 #| tbl-pos: "H"
-#| tbl-cap: "Joint frequency × FTP model at the first layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+#| tbl-cap: "Joint frequency × predictability model at the first layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
 knitr::kable(clean_brms_table(tbl_exp3_joint_first), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 
 ```{r}
 #| label: tbl-exp3-joint-final
 #| tbl-pos: "H"
-#| tbl-cap: "Joint frequency × FTP model at the final layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
+#| tbl-cap: "Joint frequency × predictability model at the final layer for Whisper encoder and decoder. Estimates are from Bayesian linear mixed-effects models (brms); % > 0 indicates the percentage of posterior samples with a positive estimate."
 knitr::kable(clean_brms_table(tbl_exp3_joint_final), row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
 ```
 

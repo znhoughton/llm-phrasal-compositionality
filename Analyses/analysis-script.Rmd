@@ -67,12 +67,12 @@ wh_cache_bam = function(name, expr_fn) {
 
 ```{r load-olmo}
 olmo_indep = read_csv('../Data/olmo-3-7b/Data_up/all_layers_results.csv') %>%
-  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
-  filter(!is.na(ftp), is.finite(log_ftp))
+  mutate(log_freq = log(frequency), log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up)) %>%
+  filter(!is.na(predic), is.finite(log_predic))
 
 olmo_sub = read_csv('../Data/olmo-3-7b/Data_upsubword/all_layers_results.csv') %>%
-  mutate(log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
-  filter(!is.na(ftp), is.finite(log_ftp))
+  mutate(log_freq = log(frequency), log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up)) %>%
+  filter(!is.na(predic), is.finite(log_predic))
 
 OLMO_FINAL_LAYER = 31
 OLMO_N_LAYERS    = 32
@@ -88,11 +88,11 @@ BLM_FINAL_LAYER_MAP = list("opt-125m" = 11L, "opt-350m" = 23L, "opt-1.3b" = 23L)
 
 load_babylm_model = function(tag) {
   ui = read_csv(paste0('../Data/babylm/', tag, '/Data_up/all_layers_results.csv')) %>%
-    mutate(model = tag, log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
-    filter(!is.na(ftp), is.finite(log_ftp))
+    mutate(model = tag, log_freq = log(frequency), log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up)) %>%
+    filter(!is.na(predic), is.finite(log_predic))
   us = read_csv(paste0('../Data/babylm/', tag, '/Data_upsubword/all_layers_results.csv')) %>%
-    mutate(model = tag, log_freq = log(frequency), log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up)) %>%
-    filter(!is.na(ftp), is.finite(log_ftp))
+    mutate(model = tag, log_freq = log(frequency), log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up)) %>%
+    filter(!is.na(predic), is.finite(log_predic))
   list(ui = ui, us = us)
 }
 
@@ -120,18 +120,19 @@ blm_sub_first   = blm_sub   %>% filter(layer == 0)
 ```
 
 ```{r load-whisper}
-# FTP values come from C4 via the shared ftp_lookup.csv (same source as OLMo)
-ftp_lookup = read_csv('../Data/ftp_lookup.csv')  # columns: verb_up, ftp
+# Predictability values come from Dolma v1.7 via the shared ftp_lookup.csv (same source as OLMo)
+ftp_lookup = read_csv('../Data/ftp_lookup.csv') %>%  # columns: verb_up, ftp
+  rename(predic = ftp)
 
 load_whisper_component = function(path, comp) {
   read_csv(path) %>%
-    select(-any_of("ftp")) %>%          # drop any pre-existing ftp column
+    select(-any_of("predic")) %>%          # drop any pre-existing predic column
     mutate(component = comp, log_freq = log(frequency),
            verb_up_chr = as.character(verb_up)) %>%
     left_join(ftp_lookup, by = c("verb_up_chr" = "verb_up")) %>%
-    filter(!is.na(ftp)) %>%
-    mutate(log_ftp = log(ftp / (1 - ftp)), verb_up = factor(verb_up_chr)) %>%
-    filter(is.finite(log_ftp)) %>%
+    filter(!is.na(predic)) %>%
+    mutate(log_predic = log(predic / (1 - predic)), verb_up = factor(verb_up_chr)) %>%
+    filter(is.finite(log_predic)) %>%
     select(-verb_up_chr)
 }
 
@@ -160,21 +161,21 @@ $$\text{log-frequency} = \log\bigl(\text{count}(V\text{+up})\bigr)$$
 
 Log-frequency is used as a continuous predictor throughout all models.
 
-> **Corpus note.** OLMo and Whisper use C4 corpus statistics (frequency and FTP), since both models were trained on or evaluated against web text of that scale. BabyLM uses its own training corpus statistics (`babylm_corpus_stats.pkl`), since its models were trained on a qualitatively different, much smaller dataset (\~100M words). Using corpus-matched statistics for each model ensures that the predictors reflect the distributional environment the model actually learned from.
+> **Corpus note.** OLMo and Whisper use C4 corpus statistics (frequency and predictability), since both models were trained on or evaluated against web text of that scale. BabyLM uses its own training corpus statistics (`babylm_corpus_stats.pkl`), since its models were trained on a qualitatively different, much smaller dataset (\~100M words). Using corpus-matched statistics for each model ensures that the predictors reflect the distributional environment the model actually learned from.
 
 ## Predictability: Forward Transitional Probability and its log-odds
 
-**Step 1 — Define FTP.** The Forward Transitional Probability of a V+up type measures how strongly the verb *predicts* the following particle. Formally, it is the conditional probability of "up" given the verb:
+**Step 1 — Define predictability.** The predictability of a V+up type measures how strongly the verb *predicts* the following particle. Formally, it is the conditional probability of "up" given the verb:
 
-$$\text{FTP}(V\text{+up}) = P(\text{"up"} \mid V) = \frac{\text{count}(V\text{+up})}{\text{count}(V)}$$
+$$\text{predictability}(V\text{+up}) = P(\text{"up"} \mid V) = \frac{\text{count}(V\text{+up})}{\text{count}(V)}$$
 
-where count$(V)$ is the total corpus frequency of the verb in any context. A high FTP (e.g. *end up*: FTP ≈ 0.09) means "up" is a relatively likely continuation of that verb; a low FTP means the verb occurs in many contexts and "up" is just one of them.
+where count$(V)$ is the total corpus frequency of the verb in any context. High predictability (e.g. *end up*: predictability ≈ 0.09) means "up" is a relatively likely continuation of that verb; low predictability means the verb occurs in many contexts and "up" is just one of them.
 
-**Step 2 — Convert to odds.** FTP is a probability bounded in $[0, 1]$, which makes it poorly suited for use as a linear predictor. We first convert to odds — the ratio of "up follows V" to "up does not follow V":
+**Step 2 — Convert to odds.** Predictability is a probability bounded in $[0, 1]$, which makes it poorly suited for use as a linear predictor. We first convert to odds — the ratio of "up follows V" to "up does not follow V":
 
-$$\text{odds}(V\text{+up}) = \frac{P(\text{"up"} \mid V)}{1 - P(\text{"up"} \mid V)} = \frac{\text{FTP}}{1 - \text{FTP}}$$
+$$\text{odds}(V\text{+up}) = \frac{P(\text{"up"} \mid V)}{1 - P(\text{"up"} \mid V)} = \frac{\text{predictability}}{1 - \text{predictability}}$$
 
-Substituting the count-based definition of FTP into both numerator and denominator:
+Substituting the count-based definition of predictability into both numerator and denominator:
 
 $$= \frac{\dfrac{\text{count}(V\text{+up})}{\text{count}(V)}}{\ 1 - \dfrac{\text{count}(V\text{+up})}{\text{count}(V)}\ } = \frac{\dfrac{\text{count}(V\text{+up})}{\text{count}(V)}}{\dfrac{\text{count}(V) - \text{count}(V\text{+up})}{\text{count}(V)}}$$
 
@@ -188,17 +189,17 @@ This is the ratio of *V+up* occurrences to occurrences of V that are *not* follo
 
 $$\text{log-odds}(V\text{+up}) = \log\!\left(\frac{\text{count}(V\text{+up})}{\text{count}(V) - \text{count}(V\text{+up})}\right)$$
 
-Because we derived this from FTP = count$(V\text{+up})$ / count$(V)$, this expression is algebraically identical to the logit of FTP:
+Because we derived this from predictability = count$(V\text{+up})$ / count$(V)$, this expression is algebraically identical to the logit of predictability:
 
-$$= \log\!\left(\frac{\text{FTP}}{1 - \text{FTP}}\right) = \operatorname{logit}(\text{FTP})$$
+$$= \log\!\left(\frac{\text{predictability}}{1 - \text{predictability}}\right) = \operatorname{logit}(\text{predictability})$$
 
-In R this is computed as `log(ftp / (1 - ftp))` and used as the predictability predictor in all models.
+In R this is computed as `log(predic / (1 - predic))` and used as the predictability predictor in all models.
 
 ------------------------------------------------------------------------
 
 # Item Statistics
 
-OLMo and Whisper use C4 corpus frequency and FTP (from `ftp_lookup.csv`). BabyLM uses its own training corpus statistics (`babylm_corpus_stats.pkl`), since its models were trained on a qualitatively different, much smaller dataset (~100M words).
+OLMo and Whisper use Dolma v1.7 corpus frequency and predictability (from `ftp_lookup.csv`). BabyLM uses its own training corpus statistics (`babylm_corpus_stats.pkl`), since its models were trained on a qualitatively different, much smaller dataset (~100M words).
 
 ## Build item tables
 
@@ -206,8 +207,8 @@ OLMo and Whisper use C4 corpus frequency and FTP (from `ftp_lookup.csv`). BabyLM
 olmo_items = olmo_indep %>%
   filter(layer == 0) %>%
   group_by(verb_up) %>%
-  summarise(frequency = first(frequency), ftp = first(ftp),
-            log_freq = first(log_freq), log_ftp = first(log_ftp),
+  summarise(frequency = first(frequency), predic = first(predic),
+            log_freq = first(log_freq), log_predic = first(log_predic),
             .groups = "drop")
 ```
 
@@ -216,8 +217,8 @@ olmo_items = olmo_indep %>%
 blm_items = blm_indep %>%
   filter(layer == 0, model == "opt-125m") %>%
   group_by(verb_up) %>%
-  summarise(frequency = first(frequency), ftp = first(ftp),
-            log_freq = first(log_freq), log_ftp = first(log_ftp),
+  summarise(frequency = first(frequency), predic = first(predic),
+            log_freq = first(log_freq), log_predic = first(log_predic),
             .groups = "drop")
 ```
 
@@ -225,8 +226,8 @@ blm_items = blm_indep %>%
 whisper_items = whisper_all %>%
   filter(layer == 0, component == "encoder") %>%
   group_by(verb_up) %>%
-  summarise(frequency = first(frequency), ftp = first(ftp),
-            log_freq = first(log_freq), log_ftp = first(log_ftp),
+  summarise(frequency = first(frequency), predic = first(predic),
+            log_freq = first(log_freq), log_predic = first(log_predic),
             .groups = "drop")
 ```
 
@@ -242,14 +243,14 @@ make_item_summary = function(items, label) {
     `IQR freq`          = sprintf("%d – %d",
                             as.integer(quantile(items$frequency, 0.25)),
                             as.integer(quantile(items$frequency, 0.75))),
-    `Median FTP`        = round(median(items$ftp), 4),
-    `FTP range`         = sprintf("%.4f – %.4f", min(items$ftp), max(items$ftp)),
-    `IQR FTP`           = sprintf("%.4f – %.4f",
-                            quantile(items$ftp, 0.25),
-                            quantile(items$ftp, 0.75)),
+    `Median predic.`    = round(median(items$predic), 4),
+    `Predic. range`     = sprintf("%.4f – %.4f", min(items$predic), max(items$predic)),
+    `IQR predic.`       = sprintf("%.4f – %.4f",
+                            quantile(items$predic, 0.25),
+                            quantile(items$predic, 0.75)),
     `Med log(freq)`     = round(median(items$log_freq), 2),
-    `Med logit(FTP)`    = round(median(items$log_ftp),  2),
-    `ρ(log freq, logit FTP)` = round(cor(items$log_freq, items$log_ftp,
+    `Med logit(predic.)`= round(median(items$log_predic),  2),
+    `ρ(log freq, logit predic.)` = round(cor(items$log_freq, items$log_predic,
                                           method = "spearman"), 3)
   )
 }
@@ -274,12 +275,12 @@ make_extremes_table = function(items, label) {
       mutate(Group = "Most frequent"),
     items %>% arrange(frequency)       %>% slice(1:5) %>%
       mutate(Group = "Least frequent"),
-    items %>% arrange(desc(ftp))       %>% slice(1:5) %>%
-      mutate(Group = "Most predictable (highest FTP)"),
-    items %>% arrange(ftp)             %>% slice(1:5) %>%
-      mutate(Group = "Least predictable (lowest FTP)")
+    items %>% arrange(desc(predic))    %>% slice(1:5) %>%
+      mutate(Group = "Most predictable (highest predic.)"),
+    items %>% arrange(predic)          %>% slice(1:5) %>%
+      mutate(Group = "Least predictable (lowest predic.)")
   ) %>%
-    select(Group, `V+up` = verb_up, Frequency = frequency, FTP = ftp) %>%
+    select(Group, `V+up` = verb_up, Frequency = frequency, Predic. = predic) %>%
     knitr::kable(
       caption = paste0(label, ": top and bottom 5 items by frequency and predictability"),
       digits  = 4
@@ -295,11 +296,11 @@ make_extremes_table(whisper_items, "Whisper-small")
 
 ```{r item-plots, fig.width = 10, fig.height = 8}
 plot_item_space = function(items, source_label) {
-  p_scatter = ggplot(items, aes(x = log_freq, y = log_ftp, label = verb_up)) +
+  p_scatter = ggplot(items, aes(x = log_freq, y = log_predic, label = verb_up)) +
     geom_point(alpha = 0.5, size = 1.5, colour = "steelblue") +
     geom_smooth(method = "lm", colour = "firebrick", linewidth = 0.8, se = TRUE) +
-    labs(x = "log(frequency)", y = "log-odds(FTP)",
-         title = "Item space: log frequency vs. log-odds(FTP)",
+    labs(x = "log(frequency)", y = "log-odds(predictability)",
+         title = "Item space: log frequency vs. log-odds(predictability)",
          subtitle = sprintf("N = %d V+up types  |  source: %s", nrow(items), source_label)) +
     theme_bw()
 
@@ -308,17 +309,17 @@ plot_item_space = function(items, source_label) {
     labs(x = "log(frequency)", y = "Count", title = "Distribution of log frequency") +
     theme_bw()
 
-  p_ftp_hist = ggplot(items, aes(x = log_ftp)) +
+  p_predic_hist = ggplot(items, aes(x = log_predic)) +
     geom_histogram(bins = 40, fill = "darkorange", colour = "white", alpha = 0.8) +
-    labs(x = "log-odds(FTP)", y = "Count", title = "Distribution of log-odds(FTP)") +
+    labs(x = "log-odds(predictability)", y = "Count", title = "Distribution of log-odds(predictability)") +
     theme_bw()
 
-  p_ftp_raw = ggplot(items, aes(x = ftp)) +
+  p_predic_raw = ggplot(items, aes(x = predic)) +
     geom_histogram(bins = 40, fill = "darkorange", colour = "white", alpha = 0.8) +
-    labs(x = "FTP", y = "Count", title = "Distribution of raw FTP") +
+    labs(x = "Predictability", y = "Count", title = "Distribution of raw predictability") +
     theme_bw()
 
-  (p_scatter) / (p_freq_hist | p_ftp_hist | p_ftp_raw)
+  (p_scatter) / (p_freq_hist | p_predic_hist | p_predic_raw)
 }
 
 plot_item_space(olmo_items,    "olmo")
@@ -476,32 +477,32 @@ plot_freq_by_layer_mgcv = function(model, data, title, n_layers = 32) {
 }
 
 plot_ftp_by_layer_mgcv = function(model, data, title, n_layers = 32) {
-  layer_seq = 0:(n_layers - 1)
-  ftp_seq   = seq(min(data$log_ftp, na.rm = TRUE), max(data$log_ftp, na.rm = TRUE), length.out = 50)
-  ftp_lo    = quantile(data$log_ftp, 0.1, na.rm = TRUE)
-  ftp_hi    = quantile(data$log_ftp, 0.9, na.rm = TRUE)
-  newdata_sp = expand.grid(layer = layer_seq, log_ftp = ftp_seq) %>%
+  layer_seq  = 0:(n_layers - 1)
+  predic_seq = seq(min(data$log_predic, na.rm = TRUE), max(data$log_predic, na.rm = TRUE), length.out = 50)
+  predic_lo  = quantile(data$log_predic, 0.1, na.rm = TRUE)
+  predic_hi  = quantile(data$log_predic, 0.9, na.rm = TRUE)
+  newdata_sp = expand.grid(layer = layer_seq, log_predic = predic_seq) %>%
     mutate(verb_up = data$verb_up[1])
   preds = predict(model, newdata = newdata_sp, se.fit = TRUE, exclude = 's(verb_up)')
   newdata_sp$fit = preds$fit
   p_spaghetti = newdata_sp %>%
-    ggplot(aes(x = log_ftp, y = fit, color = layer, group = factor(layer))) +
+    ggplot(aes(x = log_predic, y = fit, color = layer, group = factor(layer))) +
     geom_line(linewidth = 0.7, alpha = 0.8) +
     scale_color_viridis_c(option = "plasma", name = "Layer") +
-    labs(title = paste0(title, ": FTP effect by layer"), x = "log(FTP)", y = "Predicted logit") +
+    labs(title = paste0(title, ": predictability effect by layer"), x = "log-odds(predictability)", y = "Predicted logit") +
     theme_minimal()
   p_heatmap = newdata_sp %>%
-    ggplot(aes(x = layer, y = log_ftp, fill = fit)) + geom_tile() +
+    ggplot(aes(x = layer, y = log_predic, fill = fit)) + geom_tile() +
     scale_fill_viridis_c(option = "magma", name = "Predicted\nlogit") +
-    labs(title = paste0(title, ": predicted logit surface (FTP)"),
-         x = "Layer", y = "log(FTP)") + theme_minimal()
-  newdata_diff = expand.grid(layer = layer_seq, ftp_level = c("low", "high")) %>%
-    mutate(log_ftp = ifelse(ftp_level == "low", ftp_lo, ftp_hi), verb_up = data$verb_up[1])
+    labs(title = paste0(title, ": predicted logit surface (predictability)"),
+         x = "Layer", y = "log-odds(predictability)") + theme_minimal()
+  newdata_diff = expand.grid(layer = layer_seq, predic_level = c("low", "high")) %>%
+    mutate(log_predic = ifelse(predic_level == "low", predic_lo, predic_hi), verb_up = data$verb_up[1])
   preds_diff = predict(model, newdata = newdata_diff, se.fit = TRUE, exclude = 's(verb_up)')
   newdata_diff$fit = preds_diff$fit; newdata_diff$se = preds_diff$se.fit
   p_diff = newdata_diff %>%
-    select(layer, ftp_level, fit, se) %>%
-    pivot_wider(names_from = ftp_level, values_from = c(fit, se)) %>%
+    select(layer, predic_level, fit, se) %>%
+    pivot_wider(names_from = predic_level, values_from = c(fit, se)) %>%
     mutate(diff = fit_high - fit_low, se_diff = sqrt(se_high^2 + se_low^2),
            lo95 = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
            lo80 = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff) %>%
@@ -510,31 +511,31 @@ plot_ftp_by_layer_mgcv = function(model, data, title, n_layers = 32) {
     geom_ribbon(aes(ymin = lo80, ymax = hi80), fill = "darkorange", alpha = 0.3) +
     geom_line(linewidth = 1, color = "darkorange4") +
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
-    labs(title = paste0(title, ": FTP effect (high − low) across layers"),
-         x = "Layer", y = "Difference in predicted logit (90th − 10th pct FTP)") +
+    labs(title = paste0(title, ": predictability effect (high − low) across layers"),
+         x = "Layer", y = "Difference in predicted logit (90th − 10th pct predictability)") +
     theme_minimal()
   list(spaghetti = p_spaghetti, heatmap = p_heatmap, diff = p_diff)
 }
 
 plot_joint_surface = function(model, data, title) {
-  log_freq_seq = seq(min(data$log_freq, na.rm = TRUE), max(data$log_freq, na.rm = TRUE), length.out = 50)
-  log_ftp_seq  = seq(min(data$log_ftp,  na.rm = TRUE), max(data$log_ftp,  na.rm = TRUE), length.out = 50)
-  newdata = expand.grid(log_freq = log_freq_seq, log_ftp = log_ftp_seq) %>%
+  log_freq_seq   = seq(min(data$log_freq,   na.rm = TRUE), max(data$log_freq,   na.rm = TRUE), length.out = 50)
+  log_predic_seq = seq(min(data$log_predic, na.rm = TRUE), max(data$log_predic, na.rm = TRUE), length.out = 50)
+  newdata = expand.grid(log_freq = log_freq_seq, log_predic = log_predic_seq) %>%
     mutate(verb_up = data$verb_up[1])
   preds = predict(model, newdata = newdata, se.fit = FALSE, exclude = 's(verb_up)')
   newdata$fit = preds
   p_heat = newdata %>%
-    ggplot(aes(x = log_freq, y = log_ftp, fill = fit)) + geom_tile() +
+    ggplot(aes(x = log_freq, y = log_predic, fill = fit)) + geom_tile() +
     scale_fill_viridis_c(option = "magma", name = "Predicted\nlogit") +
-    labs(title = title, x = "log(frequency)", y = "log(FTP)") + theme_minimal()
-  fit_matrix = newdata %>% select(log_freq, log_ftp, fit) %>%
+    labs(title = title, x = "log(frequency)", y = "log-odds(predictability)") + theme_minimal()
+  fit_matrix = newdata %>% select(log_freq, log_predic, fit) %>%
     pivot_wider(names_from = log_freq, values_from = fit) %>%
-    select(-log_ftp) %>% as.matrix()
-  p_3d = plot_ly(x = ~log_freq_seq, y = ~log_ftp_seq, z = ~fit_matrix,
+    select(-log_predic) %>% as.matrix()
+  p_3d = plot_ly(x = ~log_freq_seq, y = ~log_predic_seq, z = ~fit_matrix,
                  type = "surface", colorscale = "Viridis") %>%
     layout(title = paste0(title, " — 3D"),
            scene = list(xaxis = list(title = "log(freq)"),
-                        yaxis = list(title = "log(FTP)"),
+                        yaxis = list(title = "log-odds(predictability)"),
                         zaxis = list(title = "Predicted logit")))
   list(heatmap = p_heat, surface3d = p_3d)
 }
@@ -726,166 +727,166 @@ plots_subword$surface3d
 
 ------------------------------------------------------------------------
 
-## OLMo — Predictability (FTP = P(up\|V))
+## OLMo — Predictability
 
-### Effect of FTP at the final layer (brms)
+### Effect of predictability at the final layer (brms)
 
 ```{r olmo-brms-ftp-final}
-olmo_indep_final_ftp  = olmo_indep %>% filter(layer == 31, !is.na(log_ftp)) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
-olmo_sub_final_ftp    = olmo_sub   %>% filter(layer == 31, !is.na(log_ftp)) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
+olmo_indep_final_ftp  = olmo_indep %>% filter(layer == 31, !is.na(log_predic)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic)))
+olmo_sub_final_ftp    = olmo_sub   %>% filter(layer == 31, !is.na(log_predic)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic)))
 
-olmo_model_ftp_up_independently = brm(
-  formula = logit ~ log_ftp + (1 | verb_up),
+olmo_model_predic_up_independently = brm(
+  formula = logit ~ log_predic + (1 | verb_up),
   data    = olmo_indep_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_ftp_up_independently")
+  file    = olmo_brms_path("model_predic_up_independently")
 )
 
-olmo_model_ftp_up_subword = brm(
-  formula = logit ~ log_ftp + (1 | verb_up),
+olmo_model_predic_up_subword = brm(
+  formula = logit ~ log_predic + (1 | verb_up),
   data    = olmo_sub_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_ftp_up_subword")
+  file    = olmo_brms_path("model_predic_up_subword")
 )
-summary(olmo_model_ftp_up_independently)
-summary(olmo_model_ftp_up_subword)
+summary(olmo_model_predic_up_independently)
+summary(olmo_model_predic_up_subword)
 ```
 
-### Effect of FTP at the first layer (brms)
+### Effect of predictability at the first layer (brms)
 
 ```{r olmo-brms-ftp-first}
-olmo_indep_first_ftp = olmo_indep %>% filter(layer == 0, !is.na(log_ftp)) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
-olmo_sub_first_ftp   = olmo_sub   %>% filter(layer == 0, !is.na(log_ftp)) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp)))
+olmo_indep_first_ftp = olmo_indep %>% filter(layer == 0, !is.na(log_predic)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic)))
+olmo_sub_first_ftp   = olmo_sub   %>% filter(layer == 0, !is.na(log_predic)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic)))
 
-olmo_model_ftp_up_independently_first_layer = brm(
-  formula = logit ~ log_ftp + (1 | verb_up),
+olmo_model_predic_up_independently_first_layer = brm(
+  formula = logit ~ log_predic + (1 | verb_up),
   data    = olmo_indep_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_ftp_up_independently_first_layer")
+  file    = olmo_brms_path("model_predic_up_independently_first_layer")
 )
-olmo_model_ftp_up_subword_first_layer = brm(
-  formula = logit ~ log_ftp + (1 | verb_up),
+olmo_model_predic_up_subword_first_layer = brm(
+  formula = logit ~ log_predic + (1 | verb_up),
   data    = olmo_sub_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_ftp_up_subword_first_layer")
+  file    = olmo_brms_path("model_predic_up_subword_first_layer")
 )
-summary(olmo_model_ftp_up_independently_first_layer)
-summary(olmo_model_ftp_up_subword_first_layer)
+summary(olmo_model_predic_up_independently_first_layer)
+summary(olmo_model_predic_up_subword_first_layer)
 ```
 
-### Effect of FTP at the final layer (bam — non-linear)
+### Effect of predictability at the final layer (bam — non-linear)
 
 ```{r olmo-bam-ftp-final}
 set.seed(964)
-olmo_bam_ftp_up_independently_final = olmo_cache_bam("bam_ftp_up_independently_final", function() {
-  bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+olmo_bam_predic_up_independently_final = olmo_cache_bam("bam_predic_up_independently_final", function() {
+  bam(logit ~ s(log_predic) + s(verb_up, bs = 're'),
       data = olmo_indep_final_ftp, method = 'fREML', discrete = TRUE)
 })
-olmo_bam_ftp_up_subword_final = olmo_cache_bam("bam_ftp_up_subword_final", function() {
-  bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+olmo_bam_predic_up_subword_final = olmo_cache_bam("bam_predic_up_subword_final", function() {
+  bam(logit ~ s(log_predic) + s(verb_up, bs = 're'),
       data = olmo_sub_final_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(olmo_bam_ftp_up_independently_final)
-summary(olmo_bam_ftp_up_subword_final)
+summary(olmo_bam_predic_up_independently_final)
+summary(olmo_bam_predic_up_subword_final)
 ```
 
-### Effect of FTP across layers (mgcv)
+### Effect of predictability across layers (mgcv)
 
 ```{r olmo-bam-ftp-layers}
-olmo_indep_ftp   = olmo_indep %>% filter(!is.na(log_ftp))
-olmo_subword_ftp = olmo_sub   %>% filter(!is.na(log_ftp))
+olmo_indep_ftp   = olmo_indep %>% filter(!is.na(log_predic))
+olmo_subword_ftp = olmo_sub   %>% filter(!is.na(log_predic))
 
 set.seed(964)
-olmo_model_ftp_layer_up_independently = olmo_cache_bam("model_ftp_layer_up_independently", function() {
-  bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+olmo_model_predic_layer_up_independently = olmo_cache_bam("model_predic_layer_up_independently", function() {
+  bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
       data = olmo_indep_ftp, method = 'fREML', discrete = TRUE)
 })
-olmo_model_ftp_layer_up_subword = olmo_cache_bam("model_ftp_layer_up_subword", function() {
-  bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+olmo_model_predic_layer_up_subword = olmo_cache_bam("model_predic_layer_up_subword", function() {
+  bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
       data = olmo_subword_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(olmo_model_ftp_layer_up_independently)
-summary(olmo_model_ftp_layer_up_subword)
+summary(olmo_model_predic_layer_up_independently)
+summary(olmo_model_predic_layer_up_subword)
 ```
 
-### FTP across layers — plots
+### Predictability across layers — plots
 
 ```{r olmo-plot-ftp-layers}
-plots_ftp_indep   = plot_ftp_by_layer_mgcv(olmo_model_ftp_layer_up_independently,
-                                            olmo_indep_ftp, "UP independently", n_layers = 32)
-plots_ftp_subword = plot_ftp_by_layer_mgcv(olmo_model_ftp_layer_up_subword,
-                                            olmo_subword_ftp, "UP as subword", n_layers = 32)
-(plots_ftp_indep$spaghetti + plots_ftp_subword$spaghetti) /
-(plots_ftp_indep$heatmap   + plots_ftp_subword$heatmap)   /
-(plots_ftp_indep$diff      + plots_ftp_subword$diff)
+plots_predic_indep   = plot_ftp_by_layer_mgcv(olmo_model_predic_layer_up_independently,
+                                               olmo_indep_ftp, "UP independently", n_layers = 32)
+plots_predic_subword = plot_ftp_by_layer_mgcv(olmo_model_predic_layer_up_subword,
+                                               olmo_subword_ftp, "UP as subword", n_layers = 32)
+(plots_predic_indep$spaghetti + plots_predic_subword$spaghetti) /
+(plots_predic_indep$heatmap   + plots_predic_subword$heatmap)   /
+(plots_predic_indep$diff      + plots_predic_subword$diff)
 ```
 
 ------------------------------------------------------------------------
 
 ## OLMo — Joint frequency + predictability
 
-### Additive freq + FTP at the final layer (brms)
+### Additive freq + predictability at the final layer (brms)
 
 ```{r olmo-brms-joint}
-olmo_model_freq_ftp_up_independently = brm(
-  formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+olmo_model_freq_predic_up_independently = brm(
+  formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
   data    = olmo_indep_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_freq_ftp_up_independently")
+  file    = olmo_brms_path("model_freq_predic_up_independently")
 )
-olmo_model_freq_ftp_up_subword = brm(
-  formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+olmo_model_freq_predic_up_subword = brm(
+  formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
   data    = olmo_sub_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_freq_ftp_up_subword")
+  file    = olmo_brms_path("model_freq_predic_up_subword")
 )
-summary(olmo_model_freq_ftp_up_independently)
-summary(olmo_model_freq_ftp_up_subword)
+summary(olmo_model_freq_predic_up_independently)
+summary(olmo_model_freq_predic_up_subword)
 ```
 
-### Additive freq + FTP at the first layer (brms)
+### Additive freq + predictability at the first layer (brms)
 
 ```{r olmo-brms-joint-first}
-olmo_model_freq_ftp_up_independently_first = brm(
-  formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+olmo_model_freq_predic_up_independently_first = brm(
+  formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
   data    = olmo_indep_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_freq_ftp_up_independently_first")
+  file    = olmo_brms_path("model_freq_predic_up_independently_first")
 )
-olmo_model_freq_ftp_up_subword_first = brm(
-  formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+olmo_model_freq_predic_up_subword_first = brm(
+  formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
   data    = olmo_sub_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-  file    = olmo_brms_path("model_freq_ftp_up_subword_first")
+  file    = olmo_brms_path("model_freq_predic_up_subword_first")
 )
-summary(olmo_model_freq_ftp_up_independently_first)
-summary(olmo_model_freq_ftp_up_subword_first)
+summary(olmo_model_freq_predic_up_independently_first)
+summary(olmo_model_freq_predic_up_subword_first)
 ```
 
-### Polynomial freq² + FTP² joint at the final layer (brms)
+### Polynomial freq² + predictability² joint at the final layer (brms)
 
 ```{r olmo-brms-poly-joint-final}
 olmo_model_poly_joint_indep_final = brm(
-  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
   data    = olmo_indep_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
   file    = olmo_brms_path("model_poly_joint_indep_final")
 )
 olmo_model_poly_joint_sub_final = brm(
-  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
   data    = olmo_sub_final_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -895,18 +896,18 @@ summary(olmo_model_poly_joint_indep_final)
 summary(olmo_model_poly_joint_sub_final)
 ```
 
-### Polynomial freq² + FTP² joint at the first layer (brms)
+### Polynomial freq² + predictability² joint at the first layer (brms)
 
 ```{r olmo-brms-poly-joint-first}
 olmo_model_poly_joint_indep_first = brm(
-  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
   data    = olmo_indep_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
   file    = olmo_brms_path("model_poly_joint_indep_first")
 )
 olmo_model_poly_joint_sub_first = brm(
-  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+  formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
   data    = olmo_sub_first_ftp,
   prior   = priors,
   iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -916,16 +917,16 @@ summary(olmo_model_poly_joint_indep_first)
 summary(olmo_model_poly_joint_sub_first)
 ```
 
-### Joint freq × FTP surface at final layer (bam)
+### Joint freq × predictability surface at final layer (bam)
 
 ```{r olmo-bam-joint}
 set.seed(964)
 olmo_bam_joint_up_independently_final = olmo_cache_bam("bam_joint_up_independently_final", function() {
-  bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+  bam(logit ~ te(log_freq, log_predic) + s(verb_up, bs = 're'),
       data = olmo_indep_final_ftp, method = 'fREML', discrete = TRUE)
 })
 olmo_bam_joint_up_subword_final = olmo_cache_bam("bam_joint_up_subword_final", function() {
-  bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+  bam(logit ~ te(log_freq, log_predic) + s(verb_up, bs = 're'),
       data = olmo_sub_final_ftp, method = 'fREML', discrete = TRUE)
 })
 summary(olmo_bam_joint_up_independently_final)
@@ -936,28 +937,28 @@ summary(olmo_bam_joint_up_subword_final)
 
 ```{r olmo-plot-joint}
 joint_indep   = plot_joint_surface(olmo_bam_joint_up_independently_final,
-                                   olmo_indep_final_ftp, "Joint freq×FTP: UP independently (final layer)")
+                                   olmo_indep_final_ftp, "Joint freq×predictability: UP independently (final layer)")
 joint_subword = plot_joint_surface(olmo_bam_joint_up_subword_final,
-                                   olmo_sub_final_ftp, "Joint freq×FTP: UP as subword (final layer)")
+                                   olmo_sub_final_ftp, "Joint freq×predictability: UP as subword (final layer)")
 joint_indep$heatmap + joint_subword$heatmap
 joint_indep$surface3d
 joint_subword$surface3d
 ```
 
-### Freq and FTP effects across layers (additive bam)
+### Freq and predictability effects across layers (additive bam)
 
 ```{r olmo-bam-freq-ftp-layers}
 set.seed(964)
-olmo_model_freq_ftp_layer_up_independently = olmo_cache_bam("model_freq_ftp_layer_up_independently", function() {
-  bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+olmo_model_freq_predic_layer_up_independently = olmo_cache_bam("model_freq_predic_layer_up_independently", function() {
+  bam(logit ~ te(log_freq, layer) + te(log_predic, layer) + s(verb_up, bs = 're'),
       data = olmo_indep_ftp, method = 'fREML', discrete = TRUE)
 })
-olmo_model_freq_ftp_layer_up_subword = olmo_cache_bam("model_freq_ftp_layer_up_subword", function() {
-  bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+olmo_model_freq_predic_layer_up_subword = olmo_cache_bam("model_freq_predic_layer_up_subword", function() {
+  bam(logit ~ te(log_freq, layer) + te(log_predic, layer) + s(verb_up, bs = 're'),
       data = olmo_subword_ftp, method = 'fREML', discrete = TRUE)
 })
-summary(olmo_model_freq_ftp_layer_up_independently)
-summary(olmo_model_freq_ftp_layer_up_subword)
+summary(olmo_model_freq_predic_layer_up_independently)
+summary(olmo_model_freq_predic_layer_up_subword)
 ```
 
 ------------------------------------------------------------------------
@@ -1162,127 +1163,127 @@ lapply(BLM_TAGS, function(tag) {
 
 ------------------------------------------------------------------------
 
-## BabyLM — Predictability (FTP = P(up\|V))
+## BabyLM — Predictability
 
 ```{r babylm-ftp-subsets}
-blm_indep_final_ftp = blm_indep_final %>% filter(!is.na(log_ftp)) %>%
+blm_indep_final_ftp = blm_indep_final %>% filter(!is.na(log_predic)) %>%
   group_by(model) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
-blm_sub_final_ftp   = blm_sub_final   %>% filter(!is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+blm_sub_final_ftp   = blm_sub_final   %>% filter(!is.na(log_predic)) %>%
   group_by(model) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
-blm_indep_first_ftp = blm_indep_first %>% filter(!is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+blm_indep_first_ftp = blm_indep_first %>% filter(!is.na(log_predic)) %>%
   group_by(model) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
-blm_sub_first_ftp   = blm_sub_first   %>% filter(!is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+blm_sub_first_ftp   = blm_sub_first   %>% filter(!is.na(log_predic)) %>%
   group_by(model) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
-blm_indep_ftp       = blm_indep       %>% filter(!is.na(log_ftp))
-blm_subword_ftp     = blm_sub         %>% filter(!is.na(log_ftp))
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+blm_indep_ftp       = blm_indep       %>% filter(!is.na(log_predic))
+blm_subword_ftp     = blm_sub         %>% filter(!is.na(log_predic))
 ```
 
-### FTP at the final layer — per model (brms)
+### Predictability at the final layer — per model (brms)
 
 ```{r babylm-brms-ftp-final}
-blm_ftp_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+blm_predic_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ log_ftp + (1 | verb_up),
+    formula = logit ~ log_predic + (1 | verb_up),
     data    = blm_indep_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-    file    = blm_brms_path(paste0("model_ftp_indep_final_", blm_slug(tag)))
+    file    = blm_brms_path(paste0("model_predic_indep_final_", blm_slug(tag)))
   )
 })
-blm_ftp_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+blm_predic_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ log_ftp + (1 | verb_up),
+    formula = logit ~ log_predic + (1 | verb_up),
     data    = blm_sub_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-    file    = blm_brms_path(paste0("model_ftp_sub_final_", blm_slug(tag)))
+    file    = blm_brms_path(paste0("model_predic_sub_final_", blm_slug(tag)))
   )
 })
-lapply(blm_ftp_indep_final_models, summary)
-lapply(blm_ftp_sub_final_models, summary)
+lapply(blm_predic_indep_final_models, summary)
+lapply(blm_predic_sub_final_models, summary)
 ```
 
-### FTP at the first layer — per model (brms)
+### Predictability at the first layer — per model (brms)
 
 ```{r babylm-brms-ftp-first}
-blm_ftp_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+blm_predic_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ log_ftp + (1 | verb_up),
+    formula = logit ~ log_predic + (1 | verb_up),
     data    = blm_indep_first_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-    file    = blm_brms_path(paste0("model_ftp_indep_first_", blm_slug(tag)))
+    file    = blm_brms_path(paste0("model_predic_indep_first_", blm_slug(tag)))
   )
 })
-blm_ftp_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+blm_predic_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ log_ftp + (1 | verb_up),
+    formula = logit ~ log_predic + (1 | verb_up),
     data    = blm_sub_first_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-    file    = blm_brms_path(paste0("model_ftp_sub_first_", blm_slug(tag)))
+    file    = blm_brms_path(paste0("model_predic_sub_first_", blm_slug(tag)))
   )
 })
-lapply(blm_ftp_indep_first_models, summary)
-lapply(blm_ftp_sub_first_models, summary)
+lapply(blm_predic_indep_first_models, summary)
+lapply(blm_predic_sub_first_models, summary)
 ```
 
-### FTP at the final layer — per model (bam — non-linear)
+### Predictability at the final layer — per model (bam — non-linear)
 
 ```{r babylm-bam-ftp-final}
 set.seed(964)
-blm_bam_ftp_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
-  blm_cache_bam(paste0("bam_ftp_indep_final_", blm_slug(tag)), function() {
-    bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+blm_bam_predic_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_predic_indep_final_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_predic) + s(verb_up, bs = 're'),
         data = blm_indep_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
-blm_bam_ftp_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
-  blm_cache_bam(paste0("bam_ftp_sub_final_", blm_slug(tag)), function() {
-    bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+blm_bam_predic_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("bam_predic_sub_final_", blm_slug(tag)), function() {
+    bam(logit ~ s(log_predic) + s(verb_up, bs = 're'),
         data = blm_sub_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
-lapply(blm_bam_ftp_indep_final_models, summary)
-lapply(blm_bam_ftp_sub_final_models, summary)
+lapply(blm_bam_predic_indep_final_models, summary)
+lapply(blm_bam_predic_sub_final_models, summary)
 ```
 
-### FTP × layer — per model (mgcv)
+### Predictability × layer — per model (mgcv)
 
 ```{r babylm-bam-ftp-layers}
 set.seed(964)
-blm_ftp_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
-  blm_cache_bam(paste0("model_ftp_layer_indep_", blm_slug(tag)), function() {
-    bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+blm_predic_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_predic_layer_indep_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
         data = blm_indep_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
-blm_ftp_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
-  blm_cache_bam(paste0("model_ftp_layer_sub_", blm_slug(tag)), function() {
-    bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+blm_predic_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_predic_layer_sub_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
         data = blm_subword_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
-lapply(blm_ftp_layer_indep_models, summary)
-lapply(blm_ftp_layer_sub_models, summary)
+lapply(blm_predic_layer_indep_models, summary)
+lapply(blm_predic_layer_sub_models, summary)
 ```
 
-### FTP plots — per model
+### Predictability plots — per model
 
 ```{r babylm-ftp-plots}
 lapply(BLM_TAGS, function(tag) {
-  plots = plot_ftp_by_layer_mgcv(blm_ftp_layer_indep_models[[tag]],
+  plots = plot_ftp_by_layer_mgcv(blm_predic_layer_indep_models[[tag]],
                                   blm_indep_ftp %>% filter(model == tag),
                                   paste0("UP indep — ", tag),
                                   n_layers = BLM_N_LAYERS[[tag]])
   print(plots$spaghetti); print(plots$diff)
 })
 lapply(BLM_TAGS, function(tag) {
-  plots = plot_ftp_by_layer_mgcv(blm_ftp_layer_sub_models[[tag]],
+  plots = plot_ftp_by_layer_mgcv(blm_predic_layer_sub_models[[tag]],
                                   blm_subword_ftp %>% filter(model == tag),
                                   paste0("UP subword — ", tag),
                                   n_layers = BLM_N_LAYERS[[tag]])
@@ -1294,12 +1295,12 @@ lapply(BLM_TAGS, function(tag) {
 
 ## BabyLM — Joint frequency + predictability
 
-### Additive freq + FTP at the final layer — per model (brms)
+### Additive freq + predictability at the final layer — per model (brms)
 
 ```{r babylm-brms-joint}
 blm_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
     data    = blm_indep_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1308,7 +1309,7 @@ blm_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag
 })
 blm_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
     data    = blm_sub_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1319,12 +1320,12 @@ lapply(blm_joint_indep_final_models, summary)
 lapply(blm_joint_sub_final_models, summary)
 ```
 
-### Additive freq + FTP at the first layer — per model (brms)
+### Additive freq + predictability at the first layer — per model (brms)
 
 ```{r babylm-brms-joint-first}
 blm_joint_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
     data    = blm_indep_first_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1333,7 +1334,7 @@ blm_joint_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag
 })
 blm_joint_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
     data    = blm_sub_first_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1344,12 +1345,12 @@ lapply(blm_joint_indep_first_models, summary)
 lapply(blm_joint_sub_first_models, summary)
 ```
 
-### Polynomial freq² + FTP² joint at the final layer — per model (brms)
+### Polynomial freq² + predictability² joint at the final layer — per model (brms)
 
 ```{r babylm-brms-poly-joint-final}
 blm_poly_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
     data    = blm_indep_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1358,7 +1359,7 @@ blm_poly_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), functio
 })
 blm_poly_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
     data    = blm_sub_final_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1369,12 +1370,12 @@ lapply(blm_poly_joint_indep_final_models, summary)
 lapply(blm_poly_joint_sub_final_models, summary)
 ```
 
-### Polynomial freq² + FTP² joint at the first layer — per model (brms)
+### Polynomial freq² + predictability² joint at the first layer — per model (brms)
 
 ```{r babylm-brms-poly-joint-first}
 blm_poly_joint_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
     data    = blm_indep_first_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1383,7 +1384,7 @@ blm_poly_joint_indep_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), functio
 })
 blm_poly_joint_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   brm(
-    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
     data    = blm_sub_first_ftp %>% filter(model == tag),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1394,19 +1395,19 @@ lapply(blm_poly_joint_indep_first_models, summary)
 lapply(blm_poly_joint_sub_first_models, summary)
 ```
 
-### Joint freq × FTP surface at final layer — per model (bam)
+### Joint freq × predictability surface at final layer — per model (bam)
 
 ```{r babylm-bam-joint}
 set.seed(964)
 blm_bam_joint_indep_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   blm_cache_bam(paste0("bam_joint_indep_final_", blm_slug(tag)), function() {
-    bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+    bam(logit ~ te(log_freq, log_predic) + s(verb_up, bs = 're'),
         data = blm_indep_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
 blm_bam_joint_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
   blm_cache_bam(paste0("bam_joint_sub_final_", blm_slug(tag)), function() {
-    bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+    bam(logit ~ te(log_freq, log_predic) + s(verb_up, bs = 're'),
         data = blm_sub_final_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
@@ -1420,33 +1421,33 @@ lapply(blm_bam_joint_sub_final_models, summary)
 lapply(BLM_TAGS, function(tag) {
   print(plot_joint_surface(blm_bam_joint_indep_final_models[[tag]],
                             blm_indep_final_ftp %>% filter(model == tag),
-                            paste0("Joint freq×FTP: UP indep — ", tag))$heatmap)
+                            paste0("Joint freq×predictability: UP indep — ", tag))$heatmap)
 })
 lapply(BLM_TAGS, function(tag) {
   print(plot_joint_surface(blm_bam_joint_sub_final_models[[tag]],
                             blm_sub_final_ftp %>% filter(model == tag),
-                            paste0("Joint freq×FTP: UP subword — ", tag))$heatmap)
+                            paste0("Joint freq×predictability: UP subword — ", tag))$heatmap)
 })
 ```
 
-### Freq and FTP across layers — per model (additive bam)
+### Freq and predictability across layers — per model (additive bam)
 
 ```{r babylm-bam-freq-ftp-layers}
 set.seed(964)
-blm_freq_ftp_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
-  blm_cache_bam(paste0("model_freq_ftp_layer_indep_", blm_slug(tag)), function() {
-    bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+blm_freq_predic_layer_indep_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_freq_predic_layer_indep_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, layer) + te(log_predic, layer) + s(verb_up, bs = 're'),
         data = blm_indep_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
-blm_freq_ftp_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
-  blm_cache_bam(paste0("model_freq_ftp_layer_sub_", blm_slug(tag)), function() {
-    bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+blm_freq_predic_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(tag) {
+  blm_cache_bam(paste0("model_freq_predic_layer_sub_", blm_slug(tag)), function() {
+    bam(logit ~ te(log_freq, layer) + te(log_predic, layer) + s(verb_up, bs = 're'),
         data = blm_subword_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
   })
 })
-lapply(blm_freq_ftp_layer_indep_models, summary)
-lapply(blm_freq_ftp_layer_sub_models, summary)
+lapply(blm_freq_predic_layer_indep_models, summary)
+lapply(blm_freq_predic_layer_sub_models, summary)
 ```
 
 ------------------------------------------------------------------------
@@ -1620,79 +1621,79 @@ plot_top_bottom(whisper_all, "decoder")
 
 ------------------------------------------------------------------------
 
-## Whisper — Predictability (FTP = P(up\|V))
+## Whisper — Predictability
 
 ```{r whisper-ftp-subsets}
-whisper_final_ftp = whisper_final %>% filter(!is.na(log_ftp)) %>%
+whisper_final_ftp = whisper_final %>% filter(!is.na(log_predic)) %>%
   group_by(component) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
-whisper_first_ftp = whisper_first %>% filter(!is.na(log_ftp)) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+whisper_first_ftp = whisper_first %>% filter(!is.na(log_predic)) %>%
   group_by(component) %>%
-  mutate(c_log_freq = c(scale(log_freq)), c_log_ftp = c(scale(log_ftp))) %>% ungroup()
-whisper_ftp       = whisper_all   %>% filter(!is.na(log_ftp))
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+whisper_ftp       = whisper_all   %>% filter(!is.na(log_predic))
 ```
 
-### FTP at the final layer — per component (brms)
+### Predictability at the final layer — per component (brms)
 
 ```{r whisper-brms-ftp-final}
-wh_ftp_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+wh_predic_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ log_ftp + (1 | verb_up),
+    formula = logit ~ log_predic + (1 | verb_up),
     data    = whisper_final_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-    file    = wh_brms_path(paste0("model_ftp_final_", comp))
+    file    = wh_brms_path(paste0("model_predic_final_", comp))
   )
 })
-lapply(wh_ftp_final_models, summary)
+lapply(wh_predic_final_models, summary)
 ```
 
-### FTP at the first layer — per component (brms)
+### Predictability at the first layer — per component (brms)
 
 ```{r whisper-brms-ftp-first}
-wh_ftp_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+wh_predic_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ log_ftp + (1 | verb_up),
+    formula = logit ~ log_predic + (1 | verb_up),
     data    = whisper_first_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
-    file    = wh_brms_path(paste0("model_ftp_first_", comp))
+    file    = wh_brms_path(paste0("model_predic_first_", comp))
   )
 })
-lapply(wh_ftp_first_models, summary)
+lapply(wh_predic_first_models, summary)
 ```
 
-### FTP at the final layer — per component (bam — non-linear)
+### Predictability at the final layer — per component (bam — non-linear)
 
 ```{r whisper-bam-ftp-final}
 set.seed(964)
-wh_bam_ftp_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
-  wh_cache_bam(paste0("bam_ftp_final_", comp), function() {
-    bam(logit ~ s(log_ftp) + s(verb_up, bs = 're'),
+wh_bam_predic_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("bam_predic_final_", comp), function() {
+    bam(logit ~ s(log_predic) + s(verb_up, bs = 're'),
         data = whisper_final_ftp %>% filter(component == comp), method = 'fREML', discrete = TRUE)
   })
 })
-lapply(wh_bam_ftp_final_models, summary)
+lapply(wh_bam_predic_final_models, summary)
 ```
 
-### FTP × layer — per component (mgcv)
+### Predictability × layer — per component (mgcv)
 
 ```{r whisper-bam-ftp-layer}
 set.seed(964)
-wh_ftp_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
-  wh_cache_bam(paste0("model_ftp_layer_", comp), function() {
-    bam(logit ~ te(log_ftp, layer) + s(verb_up, bs = 're'),
+wh_predic_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("model_predic_layer_", comp), function() {
+    bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
         data = whisper_ftp %>% filter(component == comp), method = 'fREML', discrete = TRUE)
   })
 })
-lapply(wh_ftp_layer_models, summary)
+lapply(wh_predic_layer_models, summary)
 ```
 
-### FTP plots — per component
+### Predictability plots — per component
 
 ```{r whisper-ftp-plots}
 lapply(WH_COMPONENTS, function(comp) {
-  plots = plot_ftp_by_layer_mgcv(wh_ftp_layer_models[[comp]],
+  plots = plot_ftp_by_layer_mgcv(wh_predic_layer_models[[comp]],
                                   whisper_ftp %>% filter(component == comp),
                                   paste0("Whisper — ", comp),
                                   n_layers = WH_N_LAYERS)
@@ -1704,12 +1705,12 @@ lapply(WH_COMPONENTS, function(comp) {
 
 ## Whisper — Joint frequency + predictability
 
-### Additive freq + FTP at the final layer — per component (brms)
+### Additive freq + predictability at the final layer — per component (brms)
 
 ```{r whisper-brms-joint}
 wh_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
     data    = whisper_final_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1719,12 +1720,12 @@ wh_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(
 lapply(wh_joint_final_models, summary)
 ```
 
-### Additive freq + FTP at the first layer — per component (brms)
+### Additive freq + predictability at the first layer — per component (brms)
 
 ```{r whisper-brms-joint-first}
 wh_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ c_log_freq * c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
     data    = whisper_first_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1734,12 +1735,12 @@ wh_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(
 lapply(wh_joint_first_models, summary)
 ```
 
-### Polynomial freq² + FTP² joint at the final layer — per component (brms)
+### Polynomial freq² + predictability² joint at the final layer — per component (brms)
 
 ```{r whisper-brms-poly-joint-final}
 wh_poly_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
     data    = whisper_final_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1749,12 +1750,12 @@ wh_poly_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), func
 lapply(wh_poly_joint_final_models, summary)
 ```
 
-### Polynomial freq² + FTP² joint at the first layer — per component (brms)
+### Polynomial freq² + predictability² joint at the first layer — per component (brms)
 
 ```{r whisper-brms-poly-joint-first}
 wh_poly_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   brm(
-    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_ftp + I(c_log_ftp^2) + c_log_freq:c_log_ftp + (1 | verb_up),
+    formula = logit ~ c_log_freq + I(c_log_freq^2) + c_log_predic + I(c_log_predic^2) + c_log_freq:c_log_predic + (1 | verb_up),
     data    = whisper_first_ftp %>% filter(component == comp),
     prior   = priors,
     iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
@@ -1764,30 +1765,30 @@ wh_poly_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), func
 lapply(wh_poly_joint_first_models, summary)
 ```
 
-### Joint freq × FTP surface at final layer — per component (bam)
+### Joint freq × predictability surface at final layer — per component (bam)
 
 ```{r whisper-bam-joint}
 set.seed(964)
 wh_bam_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
   wh_cache_bam(paste0("bam_joint_final_", comp), function() {
-    bam(logit ~ te(log_freq, log_ftp) + s(verb_up, bs = 're'),
+    bam(logit ~ te(log_freq, log_predic) + s(verb_up, bs = 're'),
         data = whisper_final_ftp %>% filter(component == comp), method = 'fREML', discrete = TRUE)
   })
 })
 lapply(wh_bam_joint_final_models, summary)
 ```
 
-### Freq and FTP effects across layers — per component (additive bam)
+### Freq and predictability effects across layers — per component (additive bam)
 
 ```{r whisper-bam-freq-ftp-layer}
 set.seed(964)
-wh_freq_ftp_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
-  wh_cache_bam(paste0("model_freq_ftp_layer_", comp), function() {
-    bam(logit ~ te(log_freq, layer) + te(log_ftp, layer) + s(verb_up, bs = 're'),
+wh_freq_predic_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("model_freq_predic_layer_", comp), function() {
+    bam(logit ~ te(log_freq, layer) + te(log_predic, layer) + s(verb_up, bs = 're'),
         data = whisper_ftp %>% filter(component == comp), method = 'fREML', discrete = TRUE)
   })
 })
-lapply(wh_freq_ftp_layer_models, summary)
+lapply(wh_freq_predic_layer_models, summary)
 ```
 
 ### Joint surface plots — final layer
@@ -1796,6 +1797,6 @@ lapply(wh_freq_ftp_layer_models, summary)
 lapply(WH_COMPONENTS, function(comp) {
   print(plot_joint_surface(wh_bam_joint_final_models[[comp]],
                             whisper_final_ftp %>% filter(component == comp),
-                            paste0("Whisper: joint freq×FTP — ", comp))$heatmap)
+                            paste0("Whisper: joint freq×predictability — ", comp))$heatmap)
 })
 ```

@@ -1,10 +1,10 @@
 """
 BabyLM Corpus Statistics
 =========================
-Computes V+up frequencies, verb surface-form frequencies, and Forward
-Transitional Probability (FTP) from the BabyLM training corpus:
+Computes V+up frequencies, verb surface-form frequencies, and predictability
+from the BabyLM training corpus:
 
-    FTP("pick up") = count("pick up") / count("pick")
+    predictability("pick up") = count("pick up") / count("pick")
 
 Two passes over the corpus:
   Pass 1 (spaCy, up-containing docs only): count V+up types using POS tags
@@ -13,11 +13,11 @@ Two passes over the corpus:
 
 Output saved to:
     ../Data/babylm_corpus_stats.pkl
-    (vup_freq, verb_freq, ftp)
+    (vup_freq, verb_freq, predic)
 
     vup_freq  : Counter  {"pick up": 5000, ...}
     verb_freq : Counter  {"pick": 50000, ...}   (surface form, all contexts)
-    ftp       : dict     {"pick up": 0.10, ...}
+    predic    : dict     {"pick up": 0.10, ...}
 
 Usage:
     python get_babylm_corpus_stats.py
@@ -41,7 +41,7 @@ from tqdm import tqdm
 DATASET_ID  = "znhoughton/babylm-150m-v3"
 DATASET_SPLIT = "train"
 OUT_PKL     = "../Data/babylm_corpus_stats.pkl"
-MIN_FREQ    = 10   # minimum V+up occurrences to compute FTP
+MIN_FREQ    = 10   # minimum V+up occurrences to compute predictability
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
@@ -135,13 +135,13 @@ def main():
     # Pass 1 — V+up counts via spaCy
     vup_freq, up_freq = count_vup(ds, nlp)
 
-    # Pass 2 — verb surface-form counts (only the verbs we need for FTP)
+    # Pass 2 — verb surface-form counts (only the verbs we need for predictability)
     target_verbs = {vup_type.split()[0] for vup_type in vup_freq if vup_freq[vup_type] >= MIN_FREQ}
     log.info("Target verbs for frequency counting: %d", len(target_verbs))
     verb_freq = count_verb_freq(ds, target_verbs)
 
-    # Compute FTP
-    ftp = {}
+    # Compute predictability
+    predic = {}
     n_missing = 0
     for vup_type, cnt in vup_freq.items():
         if cnt < MIN_FREQ:
@@ -149,20 +149,20 @@ def main():
         verb = vup_type.split()[0]
         denom = verb_freq.get(verb, 0)
         if denom > 0:
-            ftp[vup_type] = cnt / denom
+            predic[vup_type] = cnt / denom
         else:
             n_missing += 1
 
-    log.info("FTP computed for %d V+up types (%d skipped — verb not found in corpus)",
-             len(ftp), n_missing)
+    log.info("Predictability computed for %d V+up types (%d skipped — verb not found in corpus)",
+             len(predic), n_missing)
 
     log.info("Top 10 V+up types by frequency:")
     for vup_type, cnt in vup_freq.most_common(10):
-        ftp_val = ftp.get(vup_type, float("nan"))
-        log.info("  %-25s  freq=%8d  FTP=%.4f", vup_type, cnt, ftp_val)
+        predic_val = predic.get(vup_type, float("nan"))
+        log.info("  %-25s  freq=%8d  predictability=%.4f", vup_type, cnt, predic_val)
 
     with open(OUT_PKL, "wb") as f:
-        pickle.dump((vup_freq, verb_freq, ftp), f)
+        pickle.dump((vup_freq, verb_freq, predic), f)
     log.info("Saved to %s", OUT_PKL)
 
 

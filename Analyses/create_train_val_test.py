@@ -113,9 +113,9 @@ def parse_args():
         "--corpus-stats-pkl",
         default=None,
         help="Path to corpus stats pkl produced by get_babylm_corpus_stats.py or "
-             "get_olmo_corpus_stats.py. Contains (vup_freq, verb_freq, ftp). "
-             "If provided, an 'ftp' column (P(up|V)) is added to test.csv. "
-             "Default: None (ftp column omitted)",
+             "get_olmo_corpus_stats.py. Contains (vup_freq, verb_freq, predic). "
+             "If provided, a 'predic' column (P(up|V)) is added to test.csv. "
+             "Default: None (predic column omitted)",
     )
     return parser.parse_args()
 
@@ -404,17 +404,17 @@ def build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, toke
         make_rows(neg_upword_val_resolved,    label=0, source="other_token_from_upword")
     )
 
-    # Load FTP values if corpus stats pkl was provided
-    ftp = {}
+    # Load predictability values if corpus stats pkl was provided
+    predic = {}
     if CORPUS_STATS_PKL is not None:
-        log.info("Loading corpus stats (FTP) from %s ...", CORPUS_STATS_PKL)
+        log.info("Loading corpus stats (predictability) from %s ...", CORPUS_STATS_PKL)
         with open(CORPUS_STATS_PKL, "rb") as f:
-            _, _, ftp = pickle.load(f)
-        log.info("  FTP values loaded for %d V+up types", len(ftp))
+            _, _, predic = pickle.load(f)
+        log.info("  Predictability values loaded for %d V+up types", len(predic))
 
     test_rows = []
     for vup_type, type_records in vup_positions.items():
-        ftp_val = ftp.get(vup_type, float("nan")) if ftp else float("nan")
+        predic_val = predic.get(vup_type, float("nan")) if predic else float("nan")
         for sent, pos, word in type_records:
             row = {
                 "verb_up":        vup_type,
@@ -424,7 +424,7 @@ def build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, toke
                 "token_position": pos,
             }
             if CORPUS_STATS_PKL is not None:
-                row["ftp"] = ftp_val
+                row["predic"] = predic_val
             test_rows.append(row)
     test_df = pd.DataFrame(test_rows).sort_values(
         ["frequency", "verb_up"], ascending=[False, True]
@@ -474,7 +474,7 @@ def main():
     build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, tokenizer)
     if CORPUS_STATS_PKL is None:
         log.warning(
-            "No --corpus-stats-pkl provided. The 'ftp' column will be absent from test.csv. "
+            "No --corpus-stats-pkl provided. The 'predic' column will be absent from test.csv. "
             "Run get_olmo_corpus_stats.py or get_babylm_corpus_stats.py first, "
             "then re-run with --corpus-stats-pkl."
         )
