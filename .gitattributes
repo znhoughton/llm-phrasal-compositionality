@@ -1,5 +1,4 @@
-*.rds filter=lfs diff=lfs merge=lfs -text
-*.rds !text !filter !merge !diff
+
 /Data/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
 /Data/Data_upsubword/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
 /Data/babylm/opt-1.3b/Data_up/all_layers_results.csv filter=lfs diff=lfs merge=lfs -text
