@@ -105,47 +105,48 @@ Independently}\label{experiment-1-up-independently}
 Placeholder reference: \citet{houghton2020perceptualconsequencespauses}.
 
 The classifier was trained to distinguish the hidden-state
-representation of the particle \emph{up} from representations of other
-tokens in the same sentence. Positive training examples consisted of
-1,000 occurrences of standalone \emph{up} (i.e., functioning as a verbal
-particle, as in \emph{pick up}), drawn from sentences in the C4 corpus.
-Negative examples were 1,000 tokens randomly selected from the same
-sentences, restricted to tokens whose decoded string consists entirely
-of alphabetic characters (no numbers, punctuation, or special
-characters), and excluding \emph{up} itself and any token containing
-\emph{up} as a substring. The validation set was constructed identically
-from a non-overlapping set of sentences (targeting 1,000 positive, 1,000
-negative; exact counts vary slightly by model depending on how many
-sentences yield a valid token position under each tokenizer --- see
-Table~\ref{tbl-exp1-splits}).
+representation of the preposition \emph{up} from representations of
+other tokens in the same sentence. Positive training examples consisted
+of 1,000 occurrences of standalone \emph{up} (i.e., functioning as a
+verbal particle, as in \emph{pick up}), drawn from sentences in the C4
+corpus. Negative examples were 1,000 tokens randomly selected from the
+same sentences, restricted to tokens whose decoded string consists
+entirely of alphabetic characters (no numbers, punctuation, or special
+characters), and excluding the preposition \emph{up} itself and any
+token containing \emph{up} as a substring. The validation set was drawn
+from the same source sentence pool (a non-overlapping subset), with
+token positions resolved per model's tokenizer; exact counts fall
+slightly below 1,000 for some models because \emph{up} is not a
+standalone BPE token in every sentence under every tokenizer --- see
+Table~\ref{tbl-exp1-splits}.
 
 The classifiers targeting OLMo-3 7B and the BabyLM models were trained
 on the \textbf{same underlying sentences}, but the frequency and
 predictability statistics used in the analyses were derived from the
-respective corpus for each model (the C4 corpus for the OLMo model and
-the BabyLM corpus for the BabyLM models). In other words, the training
-sentences were identical across models, but the tokenization and corpus
-statistics varied.
+respective corpus for each model (Dolma v1.7 for OLMo-3 7B, queried via
+the infini-gram API; and the BabyLM training corpus for the BabyLM
+models). In other words, the training sentences were identical across
+models, but the tokenization and corpus statistics varied.
 
 Classifier training and validation split sizes are shown in
 Table~\ref{tbl-exp1-splits} (Appendix). The test set comprised
 verb--\emph{up} phrasal verb types (e.g., \emph{pick up}, \emph{set up})
 with at least 20 occurrences in the corpus; up to 20 sentences were
-sampled per type. Corpus frequency and forward transitional probability
-(FTP; \(P(\text{up} \mid V)\)) were derived from the corpus matched to
-each model's training distribution. Because the BabyLM corpus is smaller
-than C4, fewer V+up types attain a valid (non-zero) FTP estimate under
-BabyLM statistics; only types with a valid FTP are included in the
-analyses. Full item-level statistics are reported in
-Table~\ref{tbl-test-items} (Appendix).
+sampled per type. Corpus frequency and predictability
+(\(P(\text{up} \mid V)\)) were derived from the corpus matched to each
+model's training distribution. Because the BabyLM corpus is smaller than
+Dolma, fewer V+up types attain a valid (non-zero) predictability
+estimate under BabyLM statistics; only types with a valid predictability
+estimate are included in the analyses. Full item-level statistics are
+reported in Table~\ref{tbl-test-items} (Appendix).
 
 For OLMo-3 7B, 3,927 unique V+\emph{up} types were included, with a
 median corpus frequency of 92 (range: 20--390,086) and a median
-logit(FTP) of \(-5.38\) (range: \(-10.42\)--\(3.87\)). The BabyLM models
-shared 1,039 items; these items had a higher median frequency (920) and
-higher median logit(FTP) (\(-3.40\)) under BabyLM-corpus statistics,
-reflecting the smaller and more concentrated vocabulary of the BabyLM
-training data.
+logit(predictability) of \(-5.38\) (range: \(-10.42\)--\(3.87\)). The
+BabyLM models shared 1,039 items; these items had a higher median
+frequency (920) and higher median logit(predictability) (\(-3.40\))
+under BabyLM-corpus statistics, reflecting the smaller and more
+concentrated vocabulary of the BabyLM training data.
 
 \subsection{Joint model --- predicted surfaces
 (linear)}\label{joint-model-predicted-surfaces-linear}
@@ -199,10 +200,10 @@ set was constructed by the same procedure (targeting 1,000 positive,
 1,000 negative per sentence pool; exact counts vary by tokenizer --- see
 Table~\ref{tbl-exp2-splits}). As in Experiment 1, OLMo-3 7B and BabyLM
 models used the same underlying sentences with their own tokenizers, and
-BabyLM models used BabyLM-corpus statistics for frequency and FTP. The
-test set was identical to Experiment 1: all verb--\emph{up} phrasal verb
-types with at least 20 corpus occurrences, sampled at up to 20 sentences
-per type.
+BabyLM models used BabyLM-corpus statistics for frequency and
+predictability. The test set was identical to Experiment 1: all
+verb--\emph{up} phrasal verb types with at least 20 corpus occurrences,
+sampled at up to 20 sentences per type.
 
 Classifier training and validation split sizes are shown in
 Table~\ref{tbl-exp2-splits} (Appendix). The OLMo training set contained
@@ -281,14 +282,15 @@ up to 20 instances per type (median: 16 sentences per type; range:
 5--20). The minimum-occurrence threshold is lower than in Experiments 1
 and 2 (which required at least 20 corpus sentences per type), reflecting
 the sparser coverage of audio relative to written text. Corpus frequency
-and FTP values were drawn from the C4-derived lookup table used in
-Experiments 1 and 2. Classifier training and validation split sizes are
-shown in Table~\ref{tbl-exp3-splits} (Appendix) and full item-level
-statistics are shown in Table~\ref{tbl-test-items} (Appendix). After
-filtering to types with a valid C4 FTP estimate, 1,397 unique
-V+\emph{up} types were retained for both encoder and decoder, with a
-median corpus frequency of 683 (range: 20--390,086) and a median
-logit(FTP) of \(-4.05\) (range: \(-10.42\)--\(3.87\)).
+and predictability values were drawn from the C4-derived lookup table
+used in Experiments 1 and 2. Classifier training and validation split
+sizes are shown in Table~\ref{tbl-exp3-splits} (Appendix) and full
+item-level statistics are shown in Table~\ref{tbl-test-items}
+(Appendix). After filtering to types with a valid C4 predictability
+estimate, 1,397 unique V+\emph{up} types were retained for both encoder
+and decoder, with a median corpus frequency of 683 (range: 20--390,086)
+and a median logit(predictability) of \(-4.05\) (range:
+\(-10.42\)--\(3.87\)).
 
 \subsection{Joint model --- predicted surfaces
 (linear)}\label{joint-model-predicted-surfaces-linear-2}
@@ -327,10 +329,10 @@ predictor.}
 \toprule
 Model & N items & Med. freq & Freq range & Med. predic. & Predic. range\\
 \midrule
-OLMo-3 7B & 3927 & 92 & 20--390,086 & -5.38 & -10.41--3.89\\
+OLMo-3 7B & 4081 & 43608 & 2--103,842,740 & -5.38 & -10.98--2.74\\
 BabyLM & 1039 & 920 & 20--390,086 & -3.40 & -10.38--1.99\\
-Whisper encoder & 1397 & 683 & 20--390,086 & -4.05 & -10.41--3.89\\
-Whisper decoder & 1397 & 683 & 20--390,086 & -4.05 & -10.41--3.89\\
+Whisper encoder & 1426 & 243412 & 960--103,842,740 & -4.08 & -10.98--2.74\\
+Whisper decoder & 1426 & 243412 & 960--103,842,740 & -4.08 & -10.98--2.74\\
 \bottomrule
 \end{tabular}
 
@@ -338,10 +340,10 @@ Whisper decoder & 1397 & 683 & 20--390,086 & -4.05 & -10.41--3.89\\
 
 \caption{\label{tbl-test-items}Test set statistics for all experiments.
 Only items with a valid (non-zero) predictability estimate are included.
-Frequency is the raw corpus count; predictability is logit(FTP). BabyLM
-models (125M, 350M, 1.3B) share identical items and corpus statistics.
-Whisper encoder and decoder evaluate the same audio items with
-C4-derived corpus statistics.}
+Frequency is the raw corpus count; predictability is
+logit(predictability). BabyLM models (125M, 350M, 1.3B) share identical
+items and corpus statistics. Whisper encoder and decoder evaluate the
+same audio items with Dolma-derived frequency counts.}
 
 \end{table}%
 
@@ -380,31 +382,31 @@ sentence.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-OLMo-3 7B & Intercept & 18.58 & 0.01 & {}[18.56, 18.60] & 100.0\\
-OLMo-3 7B & Freq & -0.14 & 0.01 & {}[-0.16, -0.12] & 0.0\\
-OLMo-3 7B & Predic. & -0.11 & 0.01 & {}[-0.13, -0.09] & 0.0\\
-OLMo-3 7B & Freq:Predic. & -0.09 & 0.01 & {}[-0.11, -0.07] & 0.0\\
+OLMo-3 7B & Intercept & 18.59 & 0.01 & {}[18.57, 18.61] & 100.0\\
+OLMo-3 7B & Freq & -0.11 & 0.01 & {}[-0.13, -0.09] & 0.0\\
+OLMo-3 7B & Predic. & -0.13 & 0.01 & {}[-0.16, -0.11] & 0.0\\
+OLMo-3 7B & Freq:Predic. & -0.10 & 0.01 & {}[-0.12, -0.08] & 0.0\\
 BabyLM 125M & Intercept & 10.76 & 0.02 & {}[10.72, 10.80] & 100.0\\
 BabyLM 125M & Freq & -0.06 & 0.02 & {}[-0.09, -0.02] & 0.4\\
-BabyLM 125M & Predic. & -0.02 & 0.02 & {}[-0.06, 0.02] & 13.3\\
-BabyLM 125M & Freq:Predic. & -0.11 & 0.02 & {}[-0.15, -0.07] & 0.0\\
+BabyLM 125M & c\_log\_ftp & -0.02 & 0.02 & {}[-0.06, 0.02] & 13.3\\
+BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.11 & 0.02 & {}[-0.15, -0.07] & 0.0\\
 BabyLM 350M & Intercept & 13.34 & 0.01 & {}[13.33, 13.36] & 100.0\\
 BabyLM 350M & Freq & -0.05 & 0.01 & {}[-0.06, -0.03] & 0.0\\
-BabyLM 350M & Predic. & 0.05 & 0.01 & {}[0.03, 0.06] & 100.0\\
-BabyLM 350M & Freq:Predic. & -0.01 & 0.01 & {}[-0.03, 0.00] & 9.3\\
+BabyLM 350M & c\_log\_ftp & 0.05 & 0.01 & {}[0.03, 0.06] & 100.0\\
+BabyLM 350M & c\_log\_freq:c\_log\_ftp & -0.01 & 0.01 & {}[-0.03, 0.00] & 9.3\\
 BabyLM 1.3B & Intercept & 18.04 & 0.03 & {}[17.98, 18.11] & 100.0\\
 BabyLM 1.3B & Freq & 0.09 & 0.03 & {}[0.03, 0.15] & 99.7\\
-BabyLM 1.3B & Predic. & -0.04 & 0.03 & {}[-0.10, 0.02] & 8.5\\
-BabyLM 1.3B & Freq:Predic. & 0.01 & 0.03 & {}[-0.05, 0.08] & 66.6\\
+BabyLM 1.3B & c\_log\_ftp & -0.04 & 0.03 & {}[-0.10, 0.02] & 8.5\\
+BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & 0.01 & 0.03 & {}[-0.05, 0.08] & 66.6\\
 \bottomrule
 \end{tabular}
 
 }
 
-\caption{\label{tbl-exp1-joint-first}Joint frequency × FTP model at the
-first layer for UP independently. Estimates are from Bayesian linear
-mixed-effects models (brms); \% \textgreater{} 0 indicates the
-percentage of posterior samples with a positive estimate.}
+\caption{\label{tbl-exp1-joint-first}Joint frequency × predictability
+model at the first layer for UP independently. Estimates are from
+Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
+indicates the percentage of posterior samples with a positive estimate.}
 
 \end{table}%
 
@@ -416,31 +418,31 @@ percentage of posterior samples with a positive estimate.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-OLMo-3 7B & Intercept & 10.27 & 0.04 & {}[10.18, 10.35] & 100.0\\
-OLMo-3 7B & Freq & -0.54 & 0.05 & {}[-0.63, -0.45] & 0.0\\
-OLMo-3 7B & Predic. & -1.56 & 0.04 & {}[-1.64, -1.48] & 0.0\\
-OLMo-3 7B & Freq:Predic. & 0.00 & 0.04 & {}[-0.08, 0.08] & 50.7\\
+OLMo-3 7B & Intercept & 10.29 & 0.04 & {}[10.22, 10.37] & 100.0\\
+OLMo-3 7B & Freq & -0.57 & 0.04 & {}[-0.65, -0.49] & 0.0\\
+OLMo-3 7B & Predic. & -1.64 & 0.04 & {}[-1.72, -1.56] & 0.0\\
+OLMo-3 7B & Freq:Predic. & 0.03 & 0.04 & {}[-0.05, 0.10] & 74.5\\
 BabyLM 125M & Intercept & 8.72 & 0.04 & {}[8.65, 8.80] & 100.0\\
 BabyLM 125M & Freq & -0.30 & 0.04 & {}[-0.37, -0.23] & 0.0\\
-BabyLM 125M & Predic. & -0.07 & 0.04 & {}[-0.14, 0.01] & 3.2\\
-BabyLM 125M & Freq:Predic. & -0.12 & 0.04 & {}[-0.20, -0.05] & 0.1\\
+BabyLM 125M & c\_log\_ftp & -0.07 & 0.04 & {}[-0.14, 0.01] & 3.2\\
+BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.12 & 0.04 & {}[-0.20, -0.05] & 0.1\\
 BabyLM 350M & Intercept & 8.43 & 0.04 & {}[8.35, 8.50] & 100.0\\
 BabyLM 350M & Freq & -0.30 & 0.04 & {}[-0.38, -0.23] & 0.0\\
-BabyLM 350M & Predic. & -0.04 & 0.04 & {}[-0.11, 0.04] & 18.2\\
-BabyLM 350M & Freq:Predic. & -0.16 & 0.04 & {}[-0.24, -0.08] & 0.0\\
+BabyLM 350M & c\_log\_ftp & -0.04 & 0.04 & {}[-0.11, 0.04] & 18.2\\
+BabyLM 350M & c\_log\_freq:c\_log\_ftp & -0.16 & 0.04 & {}[-0.24, -0.08] & 0.0\\
 BabyLM 1.3B & Intercept & 8.57 & 0.05 & {}[8.47, 8.68] & 100.0\\
 BabyLM 1.3B & Freq & -0.27 & 0.05 & {}[-0.38, -0.17] & 0.0\\
-BabyLM 1.3B & Predic. & -0.20 & 0.05 & {}[-0.30, -0.10] & 0.0\\
-BabyLM 1.3B & Freq:Predic. & -0.14 & 0.05 & {}[-0.24, -0.03] & 0.7\\
+BabyLM 1.3B & c\_log\_ftp & -0.20 & 0.05 & {}[-0.30, -0.10] & 0.0\\
+BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & -0.14 & 0.05 & {}[-0.24, -0.03] & 0.7\\
 \bottomrule
 \end{tabular}
 
 }
 
-\caption{\label{tbl-exp1-joint-final}Joint frequency × FTP model at the
-final layer for UP independently. Estimates are from Bayesian linear
-mixed-effects models (brms); \% \textgreater{} 0 indicates the
-percentage of posterior samples with a positive estimate.}
+\caption{\label{tbl-exp1-joint-final}Joint frequency × predictability
+model at the final layer for UP independently. Estimates are from
+Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
+indicates the percentage of posterior samples with a positive estimate.}
 
 \end{table}%
 
@@ -482,30 +484,30 @@ tokenizer coverage.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-OLMo-3 7B & Intercept & 9.74 & 0.01 & {}[9.72, 9.75] & 100.0\\
-OLMo-3 7B & Freq & -0.13 & 0.01 & {}[-0.14, -0.11] & 0.0\\
-OLMo-3 7B & Predic. & 0.04 & 0.01 & {}[0.02, 0.05] & 100.0\\
-OLMo-3 7B & Freq:Predic. & -0.02 & 0.01 & {}[-0.03, -0.00] & 0.7\\
+OLMo-3 7B & Intercept & 9.75 & 0.01 & {}[9.73, 9.76] & 100.0\\
+OLMo-3 7B & Freq & -0.09 & 0.01 & {}[-0.11, -0.07] & 0.0\\
+OLMo-3 7B & Predic. & 0.01 & 0.01 & {}[-0.00, 0.03] & 97.2\\
+OLMo-3 7B & Freq:Predic. & -0.03 & 0.01 & {}[-0.05, -0.02] & 0.0\\
 BabyLM 125M & Intercept & 12.40 & 0.04 & {}[12.32, 12.49] & 100.0\\
 BabyLM 125M & Freq & 0.15 & 0.04 & {}[0.06, 0.23] & 100.0\\
-BabyLM 125M & Predic. & -0.19 & 0.04 & {}[-0.28, -0.11] & 0.0\\
-BabyLM 125M & Freq:Predic. & -0.06 & 0.05 & {}[-0.15, 0.03] & 9.3\\
+BabyLM 125M & c\_log\_ftp & -0.19 & 0.04 & {}[-0.28, -0.11] & 0.0\\
+BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.06 & 0.05 & {}[-0.15, 0.03] & 9.3\\
 BabyLM 350M & Intercept & 14.47 & 0.02 & {}[14.44, 14.50] & 100.0\\
 BabyLM 350M & Freq & -0.07 & 0.02 & {}[-0.10, -0.03] & 0.0\\
-BabyLM 350M & Predic. & 0.05 & 0.02 & {}[0.02, 0.08] & 99.9\\
-BabyLM 350M & Freq:Predic. & 0.00 & 0.02 & {}[-0.04, 0.03] & 43.2\\
+BabyLM 350M & c\_log\_ftp & 0.05 & 0.02 & {}[0.02, 0.08] & 99.9\\
+BabyLM 350M & c\_log\_freq:c\_log\_ftp & 0.00 & 0.02 & {}[-0.04, 0.03] & 43.2\\
 BabyLM 1.3B & Intercept & 17.53 & 0.04 & {}[17.46, 17.61] & 100.0\\
 BabyLM 1.3B & Freq & -0.04 & 0.04 & {}[-0.11, 0.04] & 15.5\\
-BabyLM 1.3B & Predic. & -0.03 & 0.04 & {}[-0.10, 0.05] & 23.9\\
-BabyLM 1.3B & Freq:Predic. & 0.00 & 0.04 & {}[-0.08, 0.08] & 48.7\\
+BabyLM 1.3B & c\_log\_ftp & -0.03 & 0.04 & {}[-0.10, 0.05] & 23.9\\
+BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & 0.00 & 0.04 & {}[-0.08, 0.08] & 48.7\\
 \bottomrule
 \end{tabular}
 
 }
 
-\caption{\label{tbl-exp2-joint-first}Joint frequency × FTP model at the
-first layer for UP as subword. Estimates are from Bayesian linear
-mixed-effects models (brms); \% \textgreater{} 0 indicates the
+\caption{\label{tbl-exp2-joint-first}Joint frequency × predictability
+model at the first layer for UP as subword. Estimates are from Bayesian
+linear mixed-effects models (brms); \% \textgreater{} 0 indicates the
 percentage of posterior samples with a positive estimate.}
 
 \end{table}%
@@ -518,30 +520,30 @@ percentage of posterior samples with a positive estimate.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-OLMo-3 7B & Intercept & 12.32 & 0.04 & {}[12.24, 12.40] & 100.0\\
-OLMo-3 7B & Freq & -0.45 & 0.05 & {}[-0.54, -0.36] & 0.0\\
-OLMo-3 7B & Predic. & -0.99 & 0.04 & {}[-1.07, -0.91] & 0.0\\
-OLMo-3 7B & Freq:Predic. & -0.06 & 0.04 & {}[-0.15, 0.02] & 7.3\\
+OLMo-3 7B & Intercept & 12.34 & 0.04 & {}[12.26, 12.42] & 100.0\\
+OLMo-3 7B & Freq & -0.48 & 0.04 & {}[-0.57, -0.40] & 0.0\\
+OLMo-3 7B & Predic. & -1.04 & 0.04 & {}[-1.12, -0.96] & 0.0\\
+OLMo-3 7B & Freq:Predic. & -0.05 & 0.04 & {}[-0.13, 0.03] & 9.3\\
 BabyLM 125M & Intercept & 12.26 & 0.07 & {}[12.13, 12.40] & 100.0\\
 BabyLM 125M & Freq & -0.45 & 0.07 & {}[-0.59, -0.32] & 0.0\\
-BabyLM 125M & Predic. & 0.11 & 0.07 & {}[-0.03, 0.24] & 93.2\\
-BabyLM 125M & Freq:Predic. & -0.17 & 0.07 & {}[-0.32, -0.03] & 0.9\\
+BabyLM 125M & c\_log\_ftp & 0.11 & 0.07 & {}[-0.03, 0.24] & 93.2\\
+BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.17 & 0.07 & {}[-0.32, -0.03] & 0.9\\
 BabyLM 350M & Intercept & 12.70 & 0.06 & {}[12.57, 12.82] & 100.0\\
 BabyLM 350M & Freq & -0.48 & 0.06 & {}[-0.60, -0.36] & 0.0\\
-BabyLM 350M & Predic. & 0.00 & 0.06 & {}[-0.12, 0.13] & 52.2\\
-BabyLM 350M & Freq:Predic. & -0.12 & 0.07 & {}[-0.25, 0.01] & 3.4\\
+BabyLM 350M & c\_log\_ftp & 0.00 & 0.06 & {}[-0.12, 0.13] & 52.2\\
+BabyLM 350M & c\_log\_freq:c\_log\_ftp & -0.12 & 0.07 & {}[-0.25, 0.01] & 3.4\\
 BabyLM 1.3B & Intercept & 10.98 & 0.05 & {}[10.88, 11.07] & 100.0\\
 BabyLM 1.3B & Freq & -0.22 & 0.05 & {}[-0.31, -0.12] & 0.0\\
-BabyLM 1.3B & Predic. & -0.07 & 0.05 & {}[-0.17, 0.02] & 6.2\\
-BabyLM 1.3B & Freq:Predic. & -0.04 & 0.05 & {}[-0.14, 0.07] & 24.5\\
+BabyLM 1.3B & c\_log\_ftp & -0.07 & 0.05 & {}[-0.17, 0.02] & 6.2\\
+BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & -0.04 & 0.05 & {}[-0.14, 0.07] & 24.5\\
 \bottomrule
 \end{tabular}
 
 }
 
-\caption{\label{tbl-exp2-joint-final}Joint frequency × FTP model at the
-final layer for UP as subword. Estimates are from Bayesian linear
-mixed-effects models (brms); \% \textgreater{} 0 indicates the
+\caption{\label{tbl-exp2-joint-final}Joint frequency × predictability
+model at the final layer for UP as subword. Estimates are from Bayesian
+linear mixed-effects models (brms); \% \textgreater{} 0 indicates the
 percentage of posterior samples with a positive estimate.}
 
 \end{table}%
@@ -580,23 +582,23 @@ same segment.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-Encoder & Intercept & 12.45 & 0.06 & {}[12.33, 12.57] & 100.0\\
-Encoder & Freq & -0.27 & 0.06 & {}[-0.39, -0.14] & 0.0\\
-Encoder & Predic. & 0.31 & 0.06 & {}[0.19, 0.43] & 100.0\\
-Encoder & Freq:Predic. & -0.02 & 0.06 & {}[-0.14, 0.09] & 33.8\\
-Decoder & Intercept & 9.24 & 0.02 & {}[9.21, 9.28] & 100.0\\
-Decoder & Freq & 0.04 & 0.02 & {}[0.01, 0.07] & 99.4\\
-Decoder & Predic. & -0.06 & 0.02 & {}[-0.09, -0.03] & 0.0\\
-Decoder & Freq:Predic. & 0.00 & 0.02 & {}[-0.03, 0.03] & 37.7\\
+Encoder & Intercept & 12.46 & 0.06 & {}[12.34, 12.58] & 100.0\\
+Encoder & Freq & -0.30 & 0.06 & {}[-0.42, -0.18] & 0.0\\
+Encoder & Predic. & 0.35 & 0.06 & {}[0.23, 0.48] & 100.0\\
+Encoder & Freq:Predic. & -0.04 & 0.06 & {}[-0.15, 0.08] & 26.4\\
+Decoder & Intercept & 9.25 & 0.02 & {}[9.21, 9.28] & 100.0\\
+Decoder & Freq & 0.07 & 0.02 & {}[0.03, 0.10] & 100.0\\
+Decoder & Predic. & -0.09 & 0.02 & {}[-0.12, -0.06] & 0.0\\
+Decoder & Freq:Predic. & -0.02 & 0.02 & {}[-0.05, 0.01] & 15.7\\
 \bottomrule
 \end{tabular}
 
 }
 
-\caption{\label{tbl-exp3-joint-first}Joint frequency × FTP model at the
-first layer for Whisper encoder and decoder. Estimates are from Bayesian
-linear mixed-effects models (brms); \% \textgreater{} 0 indicates the
-percentage of posterior samples with a positive estimate.}
+\caption{\label{tbl-exp3-joint-first}Joint frequency × predictability
+model at the first layer for Whisper encoder and decoder. Estimates are
+from Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
+indicates the percentage of posterior samples with a positive estimate.}
 
 \end{table}%
 
@@ -608,23 +610,23 @@ percentage of posterior samples with a positive estimate.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-Encoder & Intercept & 9.19 & 0.03 & {}[9.14, 9.25] & 100.0\\
-Encoder & Freq & 0.11 & 0.03 & {}[0.05, 0.17] & 100.0\\
-Encoder & Predic. & -0.07 & 0.03 & {}[-0.13, -0.01] & 1.3\\
-Encoder & Freq:Predic. & 0.03 & 0.03 & {}[-0.02, 0.09] & 89.6\\
-Decoder & Intercept & 8.49 & 0.06 & {}[8.38, 8.59] & 100.0\\
-Decoder & Freq & -0.13 & 0.05 & {}[-0.24, -0.03] & 0.7\\
-Decoder & Predic. & -0.42 & 0.06 & {}[-0.53, -0.31] & 0.0\\
-Decoder & Freq:Predic. & -0.07 & 0.05 & {}[-0.17, 0.03] & 8.8\\
+Encoder & Intercept & 9.21 & 0.03 & {}[9.15, 9.26] & 100.0\\
+Encoder & Freq & 0.12 & 0.03 & {}[0.06, 0.17] & 100.0\\
+Encoder & Predic. & -0.07 & 0.03 & {}[-0.12, -0.01] & 1.3\\
+Encoder & Freq:Predic. & 0.01 & 0.03 & {}[-0.05, 0.06] & 63.1\\
+Decoder & Intercept & 8.50 & 0.05 & {}[8.39, 8.60] & 100.0\\
+Decoder & Freq & -0.11 & 0.05 & {}[-0.21, -0.00] & 2.2\\
+Decoder & Predic. & -0.45 & 0.05 & {}[-0.56, -0.34] & 0.0\\
+Decoder & Freq:Predic. & -0.13 & 0.05 & {}[-0.23, -0.03] & 0.5\\
 \bottomrule
 \end{tabular}
 
 }
 
-\caption{\label{tbl-exp3-joint-final}Joint frequency × FTP model at the
-final layer for Whisper encoder and decoder. Estimates are from Bayesian
-linear mixed-effects models (brms); \% \textgreater{} 0 indicates the
-percentage of posterior samples with a positive estimate.}
+\caption{\label{tbl-exp3-joint-final}Joint frequency × predictability
+model at the final layer for Whisper encoder and decoder. Estimates are
+from Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
+indicates the percentage of posterior samples with a positive estimate.}
 
 \end{table}%
 
