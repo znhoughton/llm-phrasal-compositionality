@@ -711,6 +711,10 @@ p_cmp_sub_first = plot_brms_vs_bam(olmo_model_freq_up_subword_first_layer,
   olmo_bam_freq_up_subword_first, olmo_sub_first,
   "UP as subword: linear vs non-linear at first layer (0)")
 (p_cmp_indep_first | p_cmp_sub_first) / (p_cmp_indep_final | p_cmp_sub_final)
+rm(olmo_model_freq_up_independently, olmo_model_freq_up_independently_first_layer,
+   olmo_model_freq_up_subword, olmo_model_freq_up_subword_first_layer,
+   olmo_bam_freq_up_independently_final, olmo_bam_freq_up_independently_first,
+   olmo_bam_freq_up_subword_final, olmo_bam_freq_up_subword_first)
 ```
 
 ### Frequency across all layers — plots
@@ -725,6 +729,8 @@ plots_subword = plot_freq_by_layer_mgcv(olmo_model_freq_layer_up_subword,
 (plots_indep$diff      + plots_subword$diff)
 plots_indep$surface3d
 plots_subword$surface3d
+rm(olmo_model_freq_layer_up_independently, olmo_model_freq_layer_up_subword)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -798,6 +804,10 @@ olmo_bam_predic_up_subword_final = olmo_cache_bam("bam_predic_up_subword_final",
 })
 summary(olmo_bam_predic_up_independently_final)
 summary(olmo_bam_predic_up_subword_final)
+rm(olmo_model_predic_up_independently, olmo_model_predic_up_subword,
+   olmo_model_predic_up_independently_first_layer, olmo_model_predic_up_subword_first_layer,
+   olmo_bam_predic_up_independently_final, olmo_bam_predic_up_subword_final)
+gc()
 ```
 
 ### Effect of predictability across layers (mgcv)
@@ -829,6 +839,8 @@ plots_predic_subword = plot_ftp_by_layer_mgcv(olmo_model_predic_layer_up_subword
 (plots_predic_indep$spaghetti + plots_predic_subword$spaghetti) /
 (plots_predic_indep$heatmap   + plots_predic_subword$heatmap)   /
 (plots_predic_indep$diff      + plots_predic_subword$diff)
+rm(olmo_model_predic_layer_up_independently, olmo_model_predic_layer_up_subword)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -917,6 +929,11 @@ olmo_model_poly_joint_sub_first = brm(
 )
 summary(olmo_model_poly_joint_indep_first)
 summary(olmo_model_poly_joint_sub_first)
+rm(olmo_model_freq_predic_up_independently, olmo_model_freq_predic_up_subword,
+   olmo_model_freq_predic_up_independently_first, olmo_model_freq_predic_up_subword_first,
+   olmo_model_poly_joint_indep_final, olmo_model_poly_joint_sub_final,
+   olmo_model_poly_joint_indep_first, olmo_model_poly_joint_sub_first)
+gc()
 ```
 
 ### Joint freq × predictability surface at final layer (bam)
@@ -945,6 +962,7 @@ joint_subword = plot_joint_surface(olmo_bam_joint_up_subword_final,
 joint_indep$heatmap + joint_subword$heatmap
 joint_indep$surface3d
 joint_subword$surface3d
+rm(olmo_bam_joint_up_independently_final, olmo_bam_joint_up_subword_final)
 ```
 
 ### Freq and predictability effects across layers (additive bam)
@@ -961,6 +979,8 @@ olmo_model_freq_predic_layer_up_subword = olmo_cache_bam("model_freq_predic_laye
 })
 summary(olmo_model_freq_predic_layer_up_independently)
 summary(olmo_model_freq_predic_layer_up_subword)
+rm(olmo_model_freq_predic_layer_up_independently, olmo_model_freq_predic_layer_up_subword)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -1161,6 +1181,13 @@ lapply(BLM_TAGS, function(tag) {
                                    n_layers = BLM_N_LAYERS[[tag]])
   print(plots$spaghetti); print(plots$diff)
 })
+rm(blm_freq_indep_final_models, blm_freq_indep_first_models,
+   blm_bam_freq_indep_final_models, blm_bam_freq_indep_first_models,
+   blm_freq_layer_indep_models,
+   blm_freq_sub_final_models, blm_freq_sub_first_models,
+   blm_bam_freq_sub_final_models, blm_bam_freq_sub_first_models,
+   blm_freq_layer_sub_models)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -1252,6 +1279,10 @@ blm_bam_predic_sub_final_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(
 })
 lapply(blm_bam_predic_indep_final_models, summary)
 lapply(blm_bam_predic_sub_final_models, summary)
+rm(blm_predic_indep_final_models, blm_predic_sub_final_models,
+   blm_predic_indep_first_models, blm_predic_sub_first_models,
+   blm_bam_predic_indep_final_models, blm_bam_predic_sub_final_models)
+gc()
 ```
 
 ### Predictability × layer — per model (mgcv)
@@ -1291,6 +1322,8 @@ lapply(BLM_TAGS, function(tag) {
                                   n_layers = BLM_N_LAYERS[[tag]])
   print(plots$spaghetti); print(plots$diff)
 })
+rm(blm_predic_layer_indep_models, blm_predic_layer_sub_models)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -1395,6 +1428,11 @@ blm_poly_joint_sub_first_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function(
 })
 lapply(blm_poly_joint_indep_first_models, summary)
 lapply(blm_poly_joint_sub_first_models, summary)
+rm(blm_joint_indep_final_models, blm_joint_sub_final_models,
+   blm_joint_indep_first_models, blm_joint_sub_first_models,
+   blm_poly_joint_indep_final_models, blm_poly_joint_sub_final_models,
+   blm_poly_joint_indep_first_models, blm_poly_joint_sub_first_models)
+gc()
 ```
 
 ### Joint freq × predictability surface at final layer — per model (bam)
@@ -1430,6 +1468,7 @@ lapply(BLM_TAGS, function(tag) {
                             blm_sub_final_ftp %>% filter(model == tag),
                             paste0("Joint freq×predictability: UP subword — ", tag))$heatmap)
 })
+rm(blm_bam_joint_indep_final_models, blm_bam_joint_sub_final_models)
 ```
 
 ### Freq and predictability across layers — per model (additive bam)
@@ -1450,6 +1489,8 @@ blm_freq_predic_layer_sub_models = lapply(setNames(BLM_TAGS, BLM_TAGS), function
 })
 lapply(blm_freq_predic_layer_indep_models, summary)
 lapply(blm_freq_predic_layer_sub_models, summary)
+rm(blm_freq_predic_layer_indep_models, blm_freq_predic_layer_sub_models)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -1543,6 +1584,9 @@ lapply(WH_COMPONENTS, function(comp) {
                                    n_layers = WH_N_LAYERS)
   print(plots$spaghetti); print(plots$diff)
 })
+rm(wh_freq_final_models, wh_freq_first_models, wh_bam_freq_final_models,
+   wh_freq_layer_models)
+gc()
 ```
 
 ### Classifier validation accuracy across layers — encoder vs decoder
@@ -1676,6 +1720,8 @@ wh_bam_predic_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), func
   })
 })
 lapply(wh_bam_predic_final_models, summary)
+rm(wh_predic_final_models, wh_predic_first_models, wh_bam_predic_final_models)
+gc()
 ```
 
 ### Predictability × layer — per component (mgcv)
@@ -1701,6 +1747,8 @@ lapply(WH_COMPONENTS, function(comp) {
                                   n_layers = WH_N_LAYERS)
   print(plots$spaghetti); print(plots$diff)
 })
+rm(wh_predic_layer_models)
+gc()
 ```
 
 ------------------------------------------------------------------------
@@ -1765,6 +1813,9 @@ wh_poly_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), func
   )
 })
 lapply(wh_poly_joint_first_models, summary)
+rm(wh_joint_final_models, wh_joint_first_models,
+   wh_poly_joint_final_models, wh_poly_joint_first_models)
+gc()
 ```
 
 ### Joint freq × predictability surface at final layer — per component (bam)
@@ -1791,6 +1842,8 @@ wh_freq_predic_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), fun
   })
 })
 lapply(wh_freq_predic_layer_models, summary)
+rm(wh_freq_predic_layer_models)
+gc()
 ```
 
 ### Joint surface plots — final layer
@@ -1801,4 +1854,6 @@ lapply(WH_COMPONENTS, function(comp) {
                             whisper_final_ftp %>% filter(component == comp),
                             paste0("Whisper: joint freq×predictability — ", comp))$heatmap)
 })
+rm(wh_bam_joint_final_models)
+gc()
 ```

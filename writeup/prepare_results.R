@@ -415,8 +415,16 @@ compute_surface_data = function(model, data, label, n_grid = 30) {
   predic_rng = seq(quantile(data$c_log_predic, 0.01), quantile(data$c_log_predic, 0.99), length.out = n_grid)
   grid = expand.grid(c_log_freq = freq_rng, c_log_predic = predic_rng) %>%
     mutate(verb_up = data$verb_up[1])
+  # Older cached models used 'c_log_ftp' before the variable was renamed to 'c_log_predic'
+  if ("c_log_ftp" %in% rownames(fixef(model))) {
+    grid = rename(grid, c_log_ftp = c_log_predic)
+  }
   preds    = fitted(model, newdata = grid, re_formula = NA, summary = TRUE)
   grid$fit = preds[, "Estimate"]
+  # Normalize back so output CSVs always use c_log_predic regardless of model vintage
+  if ("c_log_ftp" %in% names(grid)) {
+    grid = rename(grid, c_log_predic = c_log_ftp)
+  }
   grid %>%
     mutate(
       freq_mean   = mean(data$log_freq,   na.rm = TRUE),
