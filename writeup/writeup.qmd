@@ -59,6 +59,7 @@ surface_exp1_joint_blm  = read_csv(file.path(RES, "surface_exp1_joint_blm.csv"),
 surface_exp2_joint_olmo = read_csv(file.path(RES, "surface_exp2_joint_olmo.csv"), show_col_types = FALSE)
 surface_exp2_joint_blm  = read_csv(file.path(RES, "surface_exp2_joint_blm.csv"),  show_col_types = FALSE)
 surface_exp3_joint_wh   = read_csv(file.path(RES, "surface_exp3_joint_wh.csv"),   show_col_types = FALSE)
+babylm_train_log        = read_csv(file.path(RES, "babylm_train_log.csv"),        show_col_types = FALSE)
 
 # ── Plot helpers ───────────────────────────────────────────────────────────────
 uo_colors = c("#007030", "#C9A92C", "#104735")
@@ -119,6 +120,16 @@ wh_strip = function(df, layer) {
     mutate(label = str_remove(label, " \u2014.*$"))
 }
 ```
+
+# Model Training
+
+We trained three autoregressive language models on the BabyLM corpus [@hu-etal-2024-findings], a 150M-token dataset designed to be more reflective of human language experience than web-scale corpora. All three models follow the OPT decoder-only transformer architecture, with 125M, 350M, and 1.3B parameters, respectively.
+
+Prior to training, we fit a byte-pair encoding (BPE) tokenizer directly on the BabyLM training corpus, yielding a vocabulary of 8,192 subword types. This tokenizer was shared across all three model sizes, ensuring that cross-model comparisons are not confounded by differences in tokenization.
+
+Models were trained from random initialization for 20 epochs using the AdamW optimizer with fused weight updates and bfloat16 mixed precision. The learning rate was set to $3 \times 10^{-4}$ for the 125M model and $1 \times 10^{-4}$ for the 350M and 1.3B models, each preceded by a linear warmup over 10% of total training steps. Training was distributed across two NVIDIA A100 80GB GPUs. Full hyperparameter details are given in @tbl-hyperparams (Appendix).
+
+All models and training code are openly available on HuggingFace at `znhoughton/opt-babylm-{125m,350m,1.3b}-20eps-seed964`, including intermediate checkpoints saved every 20M tokens. Training loss curves and final validation perplexity are reported in @fig-train-loss, @tbl-val-perplexity, and @fig-val-perplexity (Appendix).
 
 # Experiment 1: UP Independently
 
@@ -205,6 +216,88 @@ p2 = plot_marginal_surfaces(wh_strip(surface_exp3_joint_wh, "final")) + labs(tit
 \onecolumn
 
 # Appendix {.appendix}
+
+## BabyLM Model Hyperparameters
+
+```{r}
+#| label: tbl-hyperparams
+#| tbl-pos: "H"
+#| tbl-cap: "Hyperparameters for the three BabyLM models. All models share a BPE tokenizer (vocabulary size 8,192) trained on the BabyLM corpus. Training used two NVIDIA A100 80GB GPUs with distributed data parallelism."
+tibble::tribble(
+  ~Parameter,                   ~`OPT-125M`,           ~`OPT-350M`,           ~`OPT-1.3B`,
+  "Hidden size",                 "768",                 "1,024",               "2,048",
+  "Attention heads",             "12",                  "16",                  "32",
+  "Layers",                      "12",                  "24",                  "24",
+  "FFN intermediate size",       "3,072",               "4,096",               "8,192",
+  "Vocabulary size",             "8,192",               "8,192",               "8,192",
+  "Context length (tokens)",     "1,024",               "1,024",               "1,024",
+  "Batch size (per device)",     "400",                 "200",                 "100",
+  "Learning rate",               "$3\\times10^{-4}$",   "$1\\times10^{-4}$",   "$1\\times10^{-4}$",
+  "Warmup steps",                "366",                 "732",                 "1,465",
+  "Training epochs",             "20",                  "20",                  "20",
+  "Optimizer",                   "AdamW (fused)",        "AdamW (fused)",        "AdamW (fused)",
+  "Precision",                   "bfloat16",            "bfloat16",            "bfloat16"
+) |>
+  knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE,
+               linesep = "", escape = FALSE)
+```
+
+\clearpage
+
+## BabyLM Model Convergence
+
+All three models trained to completion over 20 epochs, with training loss decreasing monotonically throughout (@fig-train-loss). Final gradient norms were small for all models (0.16, 0.24, and 0.38 for the 125M, 350M, and 1.3B models, respectively), and the learning rate decayed to zero at the end of training, consistent with full convergence under the scheduled warmup-then-decay regime. No signs of loss divergence or instability were observed.
+
+The 1.3B model achieves the lowest training loss (2.55) and validation perplexity (15.18), as expected given its greater capacity. The 350M model, however, shows slightly elevated training loss (2.63) and validation perplexity (18.86) relative to the 125M model (training loss 2.55; validation perplexity 16.81). This is likely attributable to the lower learning rate applied to the 350M model ($1 \times 10^{-4}$ vs. $3 \times 10^{-4}$ for the 125M), which, combined with a relatively modest dataset size of 150M tokens, may have produced slower effective convergence. The effect is small and does not affect our qualitative comparisons, but we note it here for completeness.
+
+```{r}
+#| label: fig-train-loss
+#| fig-pos: "H"
+#| fig-cap: "Training loss over 20 epochs for each BabyLM model. Loss is logged every 10 gradient steps."
+babylm_train_log |>
+  mutate(model = factor(model, levels = c("OPT-125M", "OPT-350M", "OPT-1.3B"))) |>
+  ggplot(aes(x = epoch, y = loss, color = model)) +
+  geom_line(linewidth = 0.4, alpha = 0.9) +
+  scale_color_manual(values = uo_colors) +
+  labs(x = "Epoch", y = "Training loss", color = NULL) +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+```{r}
+#| label: tbl-val-perplexity
+#| tbl-pos: "H"
+#| tbl-cap: "Final validation loss and perplexity for each BabyLM model, evaluated on the BabyLM development set after 20 epochs of training."
+tibble::tribble(
+  ~Model,       ~`Val. loss`, ~Perplexity,
+  "OPT-125M",    2.82,         16.81,
+  "OPT-350M",    2.94,         18.86,
+  "OPT-1.3B",    2.72,         15.18
+) |>
+  knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, linesep = "")
+```
+
+```{r}
+#| label: fig-val-perplexity
+#| fig-pos: "H"
+#| fig-cap: "Final validation perplexity for each BabyLM model after 20 epochs of training on the BabyLM corpus. Lower perplexity indicates better fit to the validation data."
+tibble::tribble(
+  ~Model,       ~Perplexity,
+  "OPT-125M",   16.81,
+  "OPT-350M",   18.86,
+  "OPT-1.3B",   15.18
+) |>
+  mutate(Model = factor(Model, levels = c("OPT-125M", "OPT-350M", "OPT-1.3B"))) |>
+  ggplot(aes(x = Model, y = Perplexity, fill = Model)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = sprintf("%.2f", Perplexity)), vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = uo_colors) +
+  labs(x = NULL, y = "Validation perplexity") +
+  ylim(0, 23) +
+  theme_minimal()
+```
+
+\clearpage
 
 ## Test Set Items
 
