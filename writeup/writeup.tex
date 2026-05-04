@@ -74,7 +74,8 @@
 \providecommand{\tightlist}{%
   \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 
-\title{writeup}
+\title{The holistic storage of verb+\emph{up} phrases in text-based and
+audio-based language models}
 
 % In review mode, acl.sty replaces the author block with
 % "Anonymous ACL submission" automatically.
@@ -94,31 +95,243 @@
 \maketitle
 
 \begin{abstract}
-(Abstract goes here.)
+A central question in linguistics is how humans trade off between
+computation and storage. While recent work has examined abstract
+knowledge in language models, holistic storage of multi-word units has
+received far less attention. We probe internal representations in
+text-based LLMs and an ASR model, testing whether V+\emph{up} phrasal
+verbs develop distinct representations as a function of frequency and
+predictability. Both model types exhibit holistic storage effects, with
+predictability effects strengthening with scale. In the ASR model, the
+acoustic encoder and linguistic decoder dissociate in ways consistent
+with each component's functional role. These results support usage-based
+accounts and suggest that error-driven learning produces human-like
+storage patterns across modalities.
 \end{abstract}
+
+\section{Introduction}\label{introduction}
+
+A central debate in linguistics concerns how humans trade off between
+computation and storage
+\citep{stembergerAreInflectedForms2004, stembergerFrequencyLexicalStorage1986, kapatsinski2010frequencyuseleads, houghton2023doespredictabilitydrive, houghton2024frequencydependentpreferenceextremity, houghton2025boltsnutslanguage, houghton2025multiwordrepresentationsminds, morgan2016abstractknowledgedirect, morgan2024productiveknowledgeitemspecific, morganModelingIdiosyncraticPreferences2015}.
+Computation refers to applying abstract knowledge to generate new
+representations; for example, deriving \emph{wugs} from \emph{wug} via a
+productive pluralization rule. Storage refers to retrieving a whole
+representation from memory rather than computing it, as when a common
+phrase is accessed as a unit even though it could in principle be
+derived compositionally. Both mechanisms are clearly at work in language
+learning and processing, but the factors that drive what forms are
+produced via computation and what forms are stored and retrieved
+holistically remains poorly understood.
+
+\subsection{Computation vs Storage in
+Humans}\label{computation-vs-storage-in-humans}
+
+Evidence for computation is extensive: children apply productive
+morphological rules to novel words
+\citep{berkoChildsLearningEnglish1958}, syntactic and semantic priming
+demonstrate abstract shared representations
+\citep{bock1986syntacticpersistencelanguage, meyer1971facilitationrecognizingpairs},
+and humans order novel binomials by abstract preferences such as
+shorter-word-first \citep{morgan2016abstractknowledgedirect}.
+
+Storage has had a more controversial history. Early accounts held that
+only irregular forms were stored holistically and that any
+compositionally derivable form was derived via computation
+\citep{pinkerFutureTense2002}. Evidence against this strong view has
+since accumulated
+\citep{kapatsinski2010frequencyuseleads, bybeeEffectUsageDegrees1999, morgan2016abstractknowledgedirect, houghton2025multiwordrepresentationsminds, stembergerAreInflectedForms2004, stembergerFrequencyLexicalStorage1986}.
+\citet{stembergerAreInflectedForms2004} showed that inflection errors
+are less common for high-frequency words, suggesting frequency-sensitive
+storage even for regularly derived forms.
+\citet{bybeeEffectUsageDegrees1999} demonstrated that \emph{don't} is
+phonetically more reduced in high-frequency phrases like \emph{I don't
+know} than in lower-frequency phrases like \emph{I don't go}; if
+\emph{don't} always had the same underlying representation, such
+phrase-level reduction is difficult to explain.
+
+Processing studies provide converging evidence.
+\citet{morgan2016abstractknowledgedirect} found that while low-frequency
+binomials are ordered by abstract preferences, high-frequency binomials
+are governed by item-specific preferences, suggesting a
+frequency-dependent shift from computation to storage. Most directly
+relevant to the present study, \citet{kapatsinski2010frequencyuseleads}
+found that listeners are slower to detect \emph{up} in high-frequency
+V+\emph{up} phrases than in lower-frequency ones, and
+\citet{houghton2025multiwordrepresentationsminds} extended this result
+to predictability. These findings suggest that high-frequency and
+high-predictability V+\emph{up} phrases are represented holistically,
+with \emph{up} no longer as accessible as a distinct unit.
+
+\subsection{Computation vs Storage in Language
+Models}\label{computation-vs-storage-in-language-models}
+
+Whether language models exhibit analogous computation-storage tradeoffs
+has become an active area of inquiry. On the computation side, results
+are mixed: some studies find that models learn abstract generalizations
+not present in training
+\citep{misraLanguageModelsLearn2024, yaoBothDirectIndirect2025}, while
+others find that models fail where abstract knowledge is required, such
+as morphological generalization to novel words
+\citep{haleyThisBERTNow2020} or relying on item-specific rather than
+abstract preferences where humans use the latter
+\citep{houghton2025roleabstractrepresentations, lasriSubjectVerbAgreement2022}.
+On the storage side, there is no doubt that models rely heavily on
+memorization \citep{mccoy2023howmuchlanguage}, and item-specific
+frequency effects have been documented in tasks where humans show
+abstract preferences \citep{houghton2025roleabstractrepresentations}.
+
+Whether language models develop holistic phrasal representations in the
+same way as humans is an open question. If they do, this would suggest
+that holistic storage is a natural consequence of learning from
+distributional patterns in the language, requiring no special storage
+mechanism beyond what is needed for general language learning, and
+lending support to usage-based accounts of how computation and storage
+interact. This question is especially pressing for audio-based models:
+the human behavioral evidence reviewed above comes from listening
+paradigms. An automatic speech recognition (ASR) model is therefore
+arguably the most ecologically valid computational analog of the human
+results. And yet, holistic phrasal storage has never been examined in
+any such model. More broadly, holistic phrasal storage in language
+models has rarely been examined in any modality, and it has not been
+studied in models trained on human-comparable amounts of data.
+
+\subsection{Present Study}\label{present-study}
+
+The present study addresses this gap. We probe internal representations
+in both text-based language models and an audio-based speech recognition
+model using classifiers trained to detect the embedding of standalone
+\emph{up}, then applied to V+\emph{up} phrases of varying frequency and
+predictability. If these models develop holistic phrasal
+representations, the representation of \emph{up} in high-frequency and
+high-predictability V+\emph{up} phrases should diverge from that of
+standalone \emph{up} more than in lower-frequency and
+lower-predictability phrases. Our specific contributions are:
+
+\begin{itemize}
+\item
+  We show that holistic phrasal storage emerges in both text-based LLMs
+  and an ASR model, establishing that frequency- and
+  predictability-driven holistic representations arise from
+  exposure-based learning across modalities, including the auditory
+  domain in which the human behavioral evidence was originally obtained.
+\item
+  We show that frequency effects on phrasal storage are robust across
+  model sizes, but predictability effects strengthen with scale and
+  emerge in earlier layers in larger models, suggesting that sensitivity
+  to co-occurrence statistics beyond raw frequency requires greater
+  representational capacity.
+\item
+  We show that Whisper's encoder and decoder exhibit opposing effects:
+  the encoder, primarily responsible for acoustic processing, represents
+  high-frequency V+\emph{up} phrases \emph{more} similarly to standalone
+  \emph{up}, consistent with repeated acoustic exposure anchoring the
+  \emph{up} representation near its standalone form, while the decoder,
+  where linguistic representations are primary, shows holistic storage
+  for both frequency and predictability. This dissociation reveals that
+  in audio models, holistic storage is localized to the decoder.
+\item
+  We train and release three open-access BabyLM models
+  \citep{charpentier2025babylm}, checkpointed every 20M tokens, for
+  future research on human-scale language learning.
+\end{itemize}
+
+\section{Model Training}\label{model-training}
+
+We trained three autoregressive language models on the BabyLM corpus
+\citep{charpentier2025babylm}, a 150M-token dataset designed to be more
+reflective of the scale and quality of the language that humans
+receive.\footnote{Though it is worth noting, as has been pointed out
+  before \citep[e.g.,][]{houghton2025multiwordrepresentationsminds},
+  that it can be misleading to compare the tokens that LLMs receive to
+  the ``tokens'' that humans receive, since humans encounter language in
+  a context-rich environment while LLMs see only the raw text.} All
+three models follow the OPT decoder-only transformer architecture
+\citep{zhang2022opt}, with 125M, 350M, and 1.3B parameters,
+respectively.
+
+Prior to training, we fit a byte-pair encoding (BPE) tokenizer directly
+on the BabyLM training corpus, yielding a vocabulary of 8,192 subword
+types. This tokenizer was shared across all three model sizes, ensuring
+that cross-model comparisons are not confounded by differences in
+tokenization. A full description of the model training is included in
+the Appendix.
 
 \section{Experiment 1: UP
 Independently}\label{experiment-1-up-independently}
 
-\subsection{Items}\label{items}
+Experiment 1 tests whether LLMs develop holistic phrasal representations
+analogous to those proposed by usage-based theories
+\citep[e.g.,][]{kapatsinski2010frequencyuseleads, houghton2025multiwordrepresentationsminds},
+using classifiers trained on standalone \emph{up} representations and
+applied to V+\emph{up} phrases varying in frequency and predictability.
+We investigate this across OLMo-3 7B and the three BabyLMs (OPT-125M,
+OPT-350M, OPT-1.3B).
 
-Placeholder reference: \citet{houghton2020perceptualconsequencespauses}.
+\subsection{Methods}\label{methods}
 
-The classifier was trained to distinguish the hidden-state
-representation of the preposition \emph{up} from representations of
-other tokens in the same sentence. Positive training examples consisted
-of 1,000 occurrences of standalone \emph{up} (i.e., functioning as a
-verbal particle, as in \emph{pick up}), drawn from sentences in the C4
-corpus. Negative examples were 1,000 tokens randomly selected from the
-same sentences, restricted to tokens whose decoded string consists
-entirely of alphabetic characters (no numbers, punctuation, or special
-characters), and excluding the preposition \emph{up} itself and any
-token containing \emph{up} as a substring. The validation set was drawn
-from the same source sentence pool (a non-overlapping subset), with
-token positions resolved per model's tokenizer; exact counts fall
-slightly below 1,000 for some models because \emph{up} is not a
-standalone BPE token in every sentence under every tokenizer --- see
-Table~\ref{tbl-exp1-splits}.
+For each model (OLMo-3 7B and BabyLM OPT-125M, OPT-350M, and OPT-1.3B),
+we extracted the representation of the token \emph{up} from each hidden
+layer of the models for each sentence. Using these representations, we
+trained a separate logistic regression classifier for each layer to
+distinguish standalone \emph{up} (which did not occur in V+\emph{up}
+phrases in the training of the classifier) from other tokens in the same
+sentence (these other tokens did not contain the segment \emph{up} in
+any capacity); the training items are described below. The trained
+classifier was then tested on a held-out test set comprising V+\emph{up}
+phrases, and for each sentence the classifier returned a logit score
+reflecting how confident the classifier was that the representation of
+\emph{up} in the V+\emph{up} phrase resembled the standalone class. We
+then examined the logit returned by the classifier as a function of
+frequency and predictability of the V+\emph{up} phrase.
+
+Frequency for each V+\emph{up} type is operationalized as its raw corpus
+count, log-transformed:
+
+\begin{equation}\phantomsection\label{eq-log-freq}{\text{log-frequency} = \log\bigl(\text{count}(V\text{+up})\bigr)}\end{equation}
+
+Predictability is operationalized as the log-odds ratio of V+\emph{up}
+occurrences to V-only occurrences in the corpus. Letting
+\(c_{up} = \text{count}(V\text{+up})\) and \(c_V = \text{count}(V)\):
+
+\begin{equation}\phantomsection\label{eq-logit-predic}{\text{log-predictability} = \log\!\left(\frac{c_{up}}{c_V - c_{up}}\right)}\end{equation}
+
+In order to calculate frequency and predictability, we used corpus
+statistics for the dataset each model was trained on. As a result, the
+frequency and predictability statistics varied between the BabyLMs and
+the OLMo model. Specifically, for the BabyLM models, corpus statistics
+were calculated from the BabyLM V3 dataset
+\citep{charpentier2025babylm}. For OLMo-3 7B, they were computed from
+Dolma v1.7, queried via the infini-gram API \citep{liu2024infini}.
+Although OLMo-3 7B was trained on Dolma 3, a larger, more recent
+Dolma-derived corpus, Dolma v1.7 is the most recent Dolma snapshot
+indexed by infini-gram and draws from the same underlying
+sources.\footnote{The relative frequencies and co-occurrence patterns of
+  common English phrasal verbs are unlikely to differ substantially
+  between Dolma versions, as both are large-scale web-text corpora of
+  similar composition. We therefore treat Dolma v1.7 statistics as a
+  reasonable approximation of OLMo-3 7B's training distribution.}
+
+\subsubsection{Classifier Training}\label{classifier-training}
+
+The classifier was trained to distinguish the language models'
+representations of the preposition \emph{up} from representations of
+other (non-\emph{up}) tokens in the same sentence. Positive training
+examples consisted of 1,000 occurrences of standalone \emph{up} (i.e.,
+\emph{up} not occurring in a V+\emph{up} phrase, such as its use as a
+preposition or adverb), drawn from sentences in the C4 corpus
+\citep{raffel2020exploring}. Negative examples were 1,000 tokens
+randomly selected from the same sentences, restricted to tokens whose
+decoded string consists entirely of alphabetic characters (no numbers,
+punctuation, or special characters), and excluding the preposition
+\emph{up} itself and any token containing \emph{up} as a substring. The
+validation set was drawn from the same pool of sentences (a
+non-overlapping subset), with token positions resolved per model's
+tokenizer; exact counts fall slightly below 1,000 for some models
+because the tokenizer does not always produce an isolated \emph{up}
+token. For example, when \emph{up} appears before punctuation and the
+tokenizer fuses the two into a single unit (e.g., \emph{up,}), there is
+no isolable \emph{up} position to extract, so that instance is excluded.
 
 The classifiers targeting OLMo-3 7B and the BabyLM models were trained
 on the \textbf{same underlying sentences}, but the frequency and
@@ -128,28 +341,94 @@ the infini-gram API; and the BabyLM training corpus for the BabyLM
 models). In other words, the training sentences were identical across
 models, but the tokenization and corpus statistics varied.
 
-Classifier training and validation split sizes are shown in
-Table~\ref{tbl-exp1-splits} (Appendix). The test set comprised
-verb--\emph{up} phrasal verb types (e.g., \emph{pick up}, \emph{set up})
-with at least 20 occurrences in the corpus; up to 20 sentences were
-sampled per type. Corpus frequency and predictability
-(\(P(\text{up} \mid V)\)) were derived from the corpus matched to each
-model's training distribution. Because the BabyLM corpus is smaller than
-Dolma, fewer V+up types attain a valid (non-zero) predictability
+Classifier training and validation split sizes are shown in the Appendix
+(Table~\ref{tbl-exp1-splits}). The test set comprised verb+\emph{up}
+phrases (e.g., \emph{pick up}, \emph{set up}) with at least 20
+occurrences in the corpus; up to 20 sentences were sampled per type.
+Corpus frequency and predictability (log odds; see
+Equation~\ref{eq-logit-predic}) were derived from the corpus described
+above for each model (Dolma v1.7 for OLMo-3 7B; the BabyLM training
+corpus for BabyLM models). Because the BabyLM corpus is smaller than
+Dolma, fewer V+\emph{up} types attain a valid (non-zero) predictability
 estimate under BabyLM statistics; only types with a valid predictability
 estimate are included in the analyses. Full item-level statistics are
 reported in Table~\ref{tbl-test-items} (Appendix).
 
 For OLMo-3 7B, 3,927 unique V+\emph{up} types were included, with a
-median corpus frequency of 92 (range: 20--390,086) and a median
-logit(predictability) of \(-5.38\) (range: \(-10.42\)--\(3.87\)). The
-BabyLM models shared 1,039 items; these items had a higher median
-frequency (920) and higher median logit(predictability) (\(-3.40\))
-under BabyLM-corpus statistics, reflecting the smaller and more
-concentrated vocabulary of the BabyLM training data.
+median corpus frequency of 92 and a median log-predictability of
+\(-5.38\). The BabyLM models shared 1,039 items; these items had a
+higher median frequency (920) and higher median log-predictability
+(\(-3.40\)), reflecting the smaller and more concentrated vocabulary of
+the BabyLM training data.
 
-\subsection{Joint model --- predicted surfaces
-(linear)}\label{joint-model-predicted-surfaces-linear}
+\subsubsection{Analyses}\label{analyses}
+
+In order to examine the effects of frequency and predictability on the
+representations of \emph{up} in V+\emph{up} phrases, we implemented a
+Bayesian mixed-effects regression model using the \emph{brms} package
+\citep{burknerBrmsPackageBayesian2017}. For each statistical analysis,
+the outcome variable was the logit score returned by the classifier on
+each test item. We included fixed-effects for frequency and
+predictability, both of which were centered and scaled (denoted
+\(c\_\text{log\_freq}\) and \(c\_\text{log\_predic}\) below). We also
+included random intercepts for phrasal verb type (since there were
+multiple sentences for each phrasal verb). Weak, uninformative priors
+were included on each fixed-effect. The model syntax is included below:
+
+\begin{equation}\phantomsection\label{eq-linear-joint}{
+\begin{aligned}
+\text{logit} &\sim c\_\text{log\_freq} \times c\_\text{log\_predic} \\
+             &\quad + (1 \mid \text{verb\_up})
+\end{aligned}
+}\end{equation}
+
+Separate statistical models were fit for each language model at the
+final hidden layer. For each coefficient we report the posterior mean,
+standard error, 95\% credible interval, and the proportion of posterior
+samples greater than zero (\% \textgreater{} 0).
+
+In order to examine the difference in representations across hidden
+layers, we additionally fit a generalized additive model
+\citep{wood2017generalized}. Specifically, two models were fit
+separately, one for frequency and one for predictability, each with a
+tensor product smooth over the predictor and hidden layer index, as well
+as a random intercept by phrasal verb type:
+
+\begin{equation}\phantomsection\label{eq-gam-layers}{
+\begin{aligned}
+\text{logit} &\sim \mathrm{te}(\text{log\_freq},\, \text{layer}) \\
+             &\quad + s(\text{verb\_up},\, \text{bs}{=}\texttt{'re'}) \\[4pt]
+\text{logit} &\sim \mathrm{te}(\text{log\_predic},\, \text{layer}) \\
+             &\quad + s(\text{verb\_up},\, \text{bs}{=}\texttt{'re'})
+\end{aligned}
+}\end{equation}
+
+\subsection{Results}\label{results}
+
+Full numerical results are reported in Table~\ref{tbl-exp1-joint-final}
+for the Bayesian model and Table~\ref{tbl-exp1-gam-smooth} for the GAM
+(Appendix); they are visualized in Figure~\ref{fig-exp1-joint-surfaces}
+and Figure~\ref{fig-exp1-gam-layers}. Figure~\ref{fig-exp1-gam-diffs}
+(Appendix) shows the layer-by-layer difference between high- and
+low-predictor items more directly.
+
+For all four LLMs, there was a negative effect of frequency on the
+classifier's logit score. Further, for three of the four models (OLMo-3
+7B, BabyLM 125M, and BabyLM 1.3B) there was a negative effect of
+predictability (though the 125M CI crosses zero, over 96\% of posterior
+samples are negative, which we treat as a meaningful effect). In other
+words, both frequency and predictability result in the representation of
+\emph{up} in V+\emph{up} phrases being less similar to the standalone
+representation of \emph{up}.
+
+Additionally, the by-layer analysis demonstrates that this divergence
+begins to appear early on in the larger models (specifically, OLMo-3 7B
+and BabyLM 1.3B show effects relatively early on), while the smaller
+models do not show an effect until later layers. This suggests that for
+larger models, the representations of high-frequency V+\emph{up} phrases
+are more separated from the representations of the individual
+constituent words (in the case of the present experiment, the
+representation of standalone \emph{up}) than for smaller models.
 
 \begin{figure}
 
@@ -159,10 +438,10 @@ concentrated vocabulary of the BabyLM training data.
 
 }
 
-\caption{\label{fig-exp1-joint-surfaces}Predicted logit as a function of
-frequency (left) and predictability (right) from the linear joint brms
-model, at the first and final layers, for OLMo-3 7B (UP independently).
-Each line slices the joint surface at the mean of the other predictor.}
+\caption{\label{fig-exp1-joint-surfaces}Final-layer brms predicted logit
+by frequency (left) and predictability (right) for all models (UP
+independently). Lines slice the joint surface at the other predictor's
+mean; bands = 95\% CIs.}
 
 \end{figure}%
 
@@ -170,21 +449,53 @@ Each line slices the joint surface at the mean of the other predictor.}
 
 \centering{
 
-\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp1-joint-surfaces-blm-1.pdf}}
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp1-gam-layers-1.pdf}}
 
 }
 
-\caption{\label{fig-exp1-joint-surfaces-blm}Predicted logit as a
-function of frequency (left) and predictability (right) from the linear
-joint brms model at the first (top) and final (bottom) layers, for
-BabyLM models (UP independently). Each line slices the joint surface at
-the mean of the other predictor.}
+\caption{\label{fig-exp1-gam-layers}GAM-predicted logit by layer and
+predictor for all models (UP independently). Top: frequency; bottom:
+predictability. Color = logit; random effects excluded.}
 
 \end{figure}%
 
+\subsection{Discussion}\label{discussion}
+
+Experiment 1 found that a classifier trained on standalone \emph{up}
+representations was less confident that high-frequency and
+high-predictability V+\emph{up} phrases contained the representation of
+standalone \emph{up} compared to lower-frequency and
+lower-predictability V+\emph{up} phrases. These results replicate those
+of \citet{kapatsinski2010frequencyuseleads} and
+\citet{houghton2025multiwordrepresentationsminds}, who targeted humans'
+representations. In Experiment 2, we more closely replicate these
+studies by also examining representations of \emph{up} as a subword
+unit.
+
 \section{Experiment 2: UP as Subword}\label{experiment-2-up-as-subword}
 
-\subsection{Items}\label{items-1}
+In Experiment 2, we replicate the design of Experiment 1 with one key
+modification: the classifier is trained on instances of \emph{up}
+embedded within a larger word (e.g., \emph{update}, \emph{upon}, etc),
+requiring it to distinguish the sound segment \emph{up} as opposed to
+specifically the preposition \emph{up}, from other tokens. This tests
+whether the frequency and predictability effects observed in Experiment
+1 generalize to the sound segment more generally. This is arguably more
+faithful to \citet{kapatsinski2010frequencyuseleads} and
+\citet{houghton2025multiwordrepresentationsminds}'s studies where
+participants were tasked with recognizing \emph{up} in general,
+regardless of whether it occurred within a word or as a preposition.
+
+\subsection{Methods}\label{methods-1}
+
+The procedure was identical to Experiment 1 (same models, OLMo-3 7B and
+BabyLM OPT-125M, OPT-350M, OPT-1.3B; classifiers trained and evaluated
+at each hidden layer; same test set, outcome variable, and statistical
+approach) with one difference: the classifier was trained on a broader
+set of positive examples that included instances of \emph{up} embedded
+within a larger word (e.g., \emph{update}, \emph{upon}).
+
+\subsubsection{Classifier Training}\label{classifier-training-1}
 
 The training set for this experiment combined two types of positive
 example: 1,000 occurrences of standalone \emph{up} (identical to
@@ -193,29 +504,41 @@ larger word (e.g., \emph{update}, \emph{upon}, \emph{setup}).
 Critically, the subword positives were restricted to \textbf{unique word
 types}: each up-containing word form contributed exactly one instance,
 so the classifier could not learn to recognise a high-frequency form
-like \emph{setup} from repeated exposure. Negative examples (1,000 drawn
+like \emph{upon} from repeated exposure. Negative examples (1,000 drawn
 from each sentence pool) were tokens consisting entirely of alphabetic
 characters that did not contain \emph{up} as a substring. The validation
 set was constructed by the same procedure (targeting 1,000 positive,
-1,000 negative per sentence pool; exact counts vary by tokenizer --- see
+1,000 negative per sentence pool; exact counts vary by tokenizer; see
 Table~\ref{tbl-exp2-splits}). As in Experiment 1, OLMo-3 7B and BabyLM
-models used the same underlying sentences with their own tokenizers, and
-BabyLM models used BabyLM-corpus statistics for frequency and
-predictability. The test set was identical to Experiment 1: all
-verb--\emph{up} phrasal verb types with at least 20 corpus occurrences,
-sampled at up to 20 sentences per type.
+models used the same underlying sentences with their own tokenizers. The
+test set was identical to Experiment 1. Classifier training and
+validation split sizes are shown in Table~\ref{tbl-exp2-splits}
+(Appendix).
 
-Classifier training and validation split sizes are shown in
-Table~\ref{tbl-exp2-splits} (Appendix). The OLMo training set contained
-1,000 unique up-within-word types; BabyLM models similarly contributed
-1,000 unique types, with the exact set varying by tokenizer.
-Validation-set sizes differ slightly across models because some
-sentences could not be resolved to a valid token position under each
-model's tokenizer. The test set is identical to Experiment 1; item-level
-statistics are shown in Table~\ref{tbl-test-items}.
+\subsubsection{Analyses}\label{analyses-1}
 
-\subsection{Joint model --- predicted surfaces
-(linear)}\label{joint-model-predicted-surfaces-linear-1}
+Analyses were identical to those of Experiment 1, using the same model
+formula (Equation~\ref{eq-linear-joint}), predictor definitions
+(Equation~\ref{eq-log-freq}, Equation~\ref{eq-logit-predic}), priors,
+and random-effects structure. The brms models were fit separately for
+OLMo-3 7B and each BabyLM model at the final transformer layer.
+Across-layer GAMs were fit using the same approach as Experiment 1
+(Equation~\ref{eq-gam-layers}).
+
+\subsection{Results}\label{results-1}
+
+Full numerical results are reported in Table~\ref{tbl-exp2-joint-final}
+for the Bayesian model and Table~\ref{tbl-exp2-gam-smooth} for the GAM
+(Appendix); they are visualized in Figure~\ref{fig-exp2-joint-surfaces}
+and Figure~\ref{fig-exp2-gam-layers}. Figure~\ref{fig-exp2-gam-diffs}
+(Appendix) shows the layer-by-layer difference more directly. Frequency
+effects replicate Experiment 1 across all four models. Predictability
+effects are more variable: the 125M and 350M BabyLMs show weak or absent
+effects, while the 1.3B and OLMo-3 7B show progressively stronger
+negative effects, consistent with predictability sensitivity increasing
+with scale. The by-layer patterns are also more variable than in
+Experiment 1, with frequency effects generally more stable across layers
+than predictability effects.
 
 \begin{figure}
 
@@ -225,10 +548,9 @@ statistics are shown in Table~\ref{tbl-test-items}.
 
 }
 
-\caption{\label{fig-exp2-joint-surfaces}Predicted logit as a function of
-frequency (left) and predictability (right) from the linear joint brms
-model, at the first and final layers, for OLMo-3 7B (UP as subword).
-Each line slices the joint surface at the mean of the other predictor.}
+\caption{\label{fig-exp2-joint-surfaces}Final-layer brms predicted logit
+by frequency (left) and predictability (right) for all models (UP as
+subword). Lines and bands as in Figure 1.}
 
 \end{figure}%
 
@@ -236,22 +558,61 @@ Each line slices the joint surface at the mean of the other predictor.}
 
 \centering{
 
-\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp2-joint-surfaces-blm-1.pdf}}
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp2-gam-layers-1.pdf}}
 
 }
 
-\caption{\label{fig-exp2-joint-surfaces-blm}Predicted logit as a
-function of frequency (left) and predictability (right) from the linear
-joint brms model at the first (top) and final (bottom) layers, for
-BabyLM models (UP as subword). Each line slices the joint surface at the
-mean of the other predictor.}
+\caption{\label{fig-exp2-gam-layers}GAM-predicted logit as a function of
+transformer layer (x-axis) and predictor value (y-axis) for each model
+(UP as subword). Top row: log-frequency; bottom row: log-predictability.
+Color encodes the predicted logit score (random effects excluded).}
 
 \end{figure}%
+
+\subsection{Discussion}\label{discussion-1}
+
+The results of Experiment 2 mostly replicate those of Experiment 1.
+Frequency shows a strong, consistent effect such that high-frequency
+V+\emph{up} phrases diverge from representations of \emph{up}, even as a
+subword unit. The emergence of predictability effects with increasing
+parameter count suggests that sensitivity to predictability may require
+more parameters than sensitivity to frequency, perhaps because frequency
+effects are more salient to models. Further, the variable effects of
+predictability found in Experiment 2 may reflect a higher degree of
+difficulty in learning predictability effects compared to frequency
+effects.
 
 \section{Experiment 3: Whisper (ASR
 Model)}\label{experiment-3-whisper-asr-model}
 
-\subsection{Items}\label{items-2}
+In Experiment 3, we apply the same classifier approach to Whisper-small,
+an automatic speech recognition (ASR) model trained on spoken audio
+rather than written text. Whisper differs from the models in Experiments
+1 and 2 in both its training modality and its encoder-decoder
+architecture. Examining Whisper allows us to ask whether frequency and
+predictability effects on phrasal representations generalize beyond
+text-based models to representations learned from speech, and whether
+such effects differ between the encoder (which processes acoustic input)
+and the decoder (which generates text output).
+
+\subsection{Methods}\label{methods-2}
+
+The procedure mirrored Experiments 1 and 2, with two key differences:
+(1) the model was Whisper-small, an ASR model with an encoder-decoder
+architecture trained on spoken audio rather than text; and (2) the
+stimuli were spoken audio segments rather than written sentences. For
+each segment, we ran the audio through Whisper and extracted the
+hidden-state representation of \emph{up} at each layer of the encoder
+and decoder separately. A logistic regression classifier was trained
+independently for each component (encoder, decoder) on spoken instances
+of standalone \emph{up} (see Classifier Training below), then applied to
+spoken V+\emph{up} phrasal verb segments. As in Experiments 1 and 2,
+each segment contributed one observation, with random intercepts by
+phrasal verb type. For the sake of brevity, we only trained the
+classifier to differentiate between Whisper's embeddings of \emph{up} as
+a standalone preposition and non-\emph{up} tokens.
+
+\subsubsection{Classifier Training}\label{classifier-training-2}
 
 The Whisper experiment used spoken language data drawn from a
 mixed-source audio metadata file (\texttt{up-audio-metadata.csv})
@@ -261,39 +622,72 @@ WhisperX forced alignment. Each occurrence of \emph{up} was classified
 by running spaCy part-of-speech tagging on the full segment transcript:
 if the token immediately preceding \emph{up} was tagged as a VERB, the
 instance was labelled \emph{V+up} (e.g., \emph{pick up}, \emph{clean
-up}); otherwise it was labelled \emph{word\_up} (e.g., \emph{it up},
-\emph{them up}). This classification procedure mirrors the one used to
-identify standalone \emph{up} in Experiments 1 and 2. Of the 224,118
-segments, 58,751 were classified as \emph{word\_up} and 165,367 as
-\emph{V+up}, spanning 4,161 unique V+up types.
+up}). This classification procedure mirrors the one used to identify
+standalone \emph{up} in Experiment 1. Of the 224,118 segments, 165,367
+were classified as \emph{V+up}, spanning 4,161 unique V+\emph{up} types.
 
-The \textbf{training and validation sets} used 1,000 \emph{word\_up}
-instances each as positive examples, paired with 1,000 randomly selected
-non-\emph{up} words from the same segment as negative examples. This
-mirrors the standalone-\emph{up} training design of Experiments 1 and 2.
-Negative words were restricted to those whose string consists entirely
-of alphabetic characters (matching the \texttt{token.isalpha()}
-criterion used in Experiments 1 and 2), with a minimum duration of 20
-ms. Training and validation segments were non-overlapping.
+The \textbf{training and validation sets} used 1,000 standalone
+\emph{up} instances each as positive examples, paired with 1,000
+randomly selected non-\emph{up} words from the same segment as negative
+examples. This mirrors the standalone-\emph{up} training design of
+Experiment 1. Negative words were restricted to those whose string
+consists entirely of alphabetic characters (matching the
+\texttt{token.isalpha()} criterion used in Experiments 1 and 2), with a
+minimum duration of 20 ms. Training and validation segments were
+non-overlapping.
 
-The \textbf{test set} comprised V+up phrasal verb types with at least 5
-occurrences in the audio dataset, yielding 1,466 qualifying types, with
-up to 20 instances per type (median: 16 sentences per type; range:
-5--20). The minimum-occurrence threshold is lower than in Experiments 1
-and 2 (which required at least 20 corpus sentences per type), reflecting
-the sparser coverage of audio relative to written text. Corpus frequency
-and predictability values were drawn from the C4-derived lookup table
-used in Experiments 1 and 2. Classifier training and validation split
-sizes are shown in Table~\ref{tbl-exp3-splits} (Appendix) and full
-item-level statistics are shown in Table~\ref{tbl-test-items}
-(Appendix). After filtering to types with a valid C4 predictability
-estimate, 1,397 unique V+\emph{up} types were retained for both encoder
-and decoder, with a median corpus frequency of 683 (range: 20--390,086)
-and a median logit(predictability) of \(-4.05\) (range:
-\(-10.42\)--\(3.87\)).
+The \textbf{test set} comprised V+\emph{up} types with at least 5
+occurrences in the audio dataset (lower than Experiments 1 and 2,
+reflecting sparser audio coverage), with up to 20 instances per type.
+Corpus frequency and predictability were drawn from Dolma v1.7 (via
+infini-gram), identical to OLMo-3 7B. After filtering to types with a
+valid predictability estimate, 1,397 unique V+\emph{up} types were
+retained (median corpus frequency: 683; median log-predictability:
+\(-4.05\)). Split sizes and item-level statistics are in
+Table~\ref{tbl-exp3-splits} and Table~\ref{tbl-test-items} (Appendix).
 
-\subsection{Joint model --- predicted surfaces
-(linear)}\label{joint-model-predicted-surfaces-linear-2}
+\subsubsection{Analyses}\label{analyses-2}
+
+Analyses followed the same procedure as Experiments 1 and 2, using the
+same model formula (Equation~\ref{eq-linear-joint}) and predictor
+definitions (Equation~\ref{eq-log-freq},
+Equation~\ref{eq-logit-predic}). The brms models were fit separately for
+Whisper's encoder and decoder at the final transformer layer. Corpus
+statistics were drawn from Dolma v1.7 (queried via the infini-gram API)
+for both components. Across-layer GAMs were fit using the same approach
+as Experiment 1 (Equation~\ref{eq-gam-layers}).
+
+\subsection{Results}\label{results-2}
+
+Full numerical results are reported in Table~\ref{tbl-exp3-joint-final}
+for the Bayesian model and Table~\ref{tbl-exp3-gam-smooth} for the GAM
+model (Appendix); they are visualized in
+Figure~\ref{fig-exp3-joint-surfaces} and
+Figure~\ref{fig-exp3-gam-layers} below. Figure~\ref{fig-exp3-gam-diffs}
+(Appendix) shows the layer-by-layer difference between high- and
+low-predictor items more directly.
+
+The results for Whisper show a different trend between the encoder and
+decoder. For the encoder, the effect of frequency on classifier logits
+is positive while the effect of predictability is negative. On the other
+hand, for the decoder, the effects of both frequency and predictability
+are negative. Further, there is also a negative interaction between
+frequency and predictability in the decoder, suggesting that the
+negative effect of frequency is even \emph{more} negative when the
+V+\emph{up} phrase is also predictable.
+
+The by-layer analysis demonstrates that the effect of frequency in the
+encoder actually starts out as \emph{negative} and only becomes positive
+in later layers of the encoder. The initial negative effect may be in
+part due to the phonological reduction of high-frequency items: the raw
+acoustics of the high-frequency V+\emph{up} phrases may be more reduced
+and only after some abstraction does the model begin to represent the
+\emph{up} in V+\emph{up} phrases more similarly to the standalone word.
+Interestingly, the trend for predictability is the opposite: it starts
+out positive and ends up negative, suggesting that the encoder is able
+to encode high-predictability phrases as containing \emph{up} in early
+layers, while the encoding of V+\emph{up} phrases becomes agnostic to
+predictability in later layers.
 
 \begin{figure}
 
@@ -303,13 +697,117 @@ and a median logit(predictability) of \(-4.05\) (range:
 
 }
 
-\caption{\label{fig-exp3-joint-surfaces}Predicted logit as a function of
-frequency (left) and predictability (right) from the linear joint brms
-model at the first (top) and final (bottom) layers, for Whisper encoder
-and decoder. Each line slices the joint surface at the mean of the other
-predictor.}
+\caption{\label{fig-exp3-joint-surfaces}Final-layer brms predicted logit
+by frequency (left) and predictability (right) for Whisper encoder and
+decoder. Lines and bands as in Figure 1.}
 
 \end{figure}%
+
+\begin{figure}
+
+\centering{
+
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp3-gam-layers-1.pdf}}
+
+}
+
+\caption{\label{fig-exp3-gam-layers}GAM-predicted logit by layer and
+predictor for Whisper encoder and decoder. Top: frequency; bottom:
+predictability. Color = logit; darker = lower logit (less similar to
+standalone \emph{up}); random effects excluded.}
+
+\end{figure}%
+
+\subsection{Discussion}\label{discussion-2}
+
+The results of Whisper demonstrate an interesting difference between
+audio speech recognizers and text-based language models: the encoder of
+ASR models represents high-frequency V+\emph{up} phrases \emph{more}
+similarly to the standalone \emph{up} representations relative to
+lower-frequency V+\emph{up} phrases. High-predictability phrases, by
+contrast, are represented \emph{less} similarly to standalone \emph{up}
+even at the encoder's final layer, and by the final layer of the
+decoder, both effects are strongly negative, indicating fully holistic
+representations at the output stage.
+
+We propose that this pattern reflects the functional division between
+Whisper's encoder and decoder. The encoder's primary role is acoustic
+processing, converting the raw audio signal into representations
+suitable for recognition. Crucially, frequency and predictability are
+not equivalent dimensions: a phrase can be highly predictable yet low in
+frequency (\emph{clammed up}, for instance, has a predictability of 0.83
+in our corpus: \emph{up} is essentially the only possible completion,
+yet occurs over 2,600 times less frequently than \emph{set up}).
+High-frequency V+\emph{up} phrases appear many times in the acoustic
+signal; even though frequent phrases tend to undergo phonetic reduction,
+repeated acoustic exposure gives the encoder extensive experience with
+\emph{up} in context, anchoring its acoustic representation close to the
+standalone form. High-predictability phrases are not necessarily
+high-frequency, so the encoder receives fewer total acoustic exposures
+to them, and their reduced forms of \emph{up} may be less reliably
+associated with the standalone \emph{up} representation. Holistic
+storage effects, by contrast, are most apparent in the decoder, where
+linguistic rather than acoustic representations are primary: by the
+decoder's final layer, both frequency and predictability drive
+representations strongly away from standalone \emph{up}, consistent with
+fully holistic storage at the linguistic level.
+
+\section{Discussion and Conclusion}\label{discussion-and-conclusion}
+
+The present study demonstrates that in general, both text-based LLMs and
+ASR models represent high-frequency and high-predictability V+\emph{up}
+phrases holistically. Further, the effect of predictability is clearer
+for larger models, suggesting that increasing the number of parameters
+facilitates predictability effects. Finally, the results suggest that
+for larger models, these effects emerge in earlier layers, while for
+smaller models the effect emerges in later layers. The Whisper results
+add a further nuance: the encoder's positive frequency effect, absent in
+text-based LLMs, likely reflects the acoustic nature of its
+representations: repeated encounters with the reduced but recognizable
+\emph{up} in high-frequency phrases anchor its acoustic representation
+near the standalone form. Holistic storage effects are instead most
+pronounced in the decoder, where linguistic rather than acoustic
+representations are primary, and both frequency and predictability drive
+representations strongly away from standalone \emph{up}.
+
+The by-layer results suggest that holistic storage is better understood
+as a spectrum than a binary distinction. Representations that diverge
+only in later layers may reflect a form of partial holistic storage,
+where lower-level representations remain more compositional but
+higher-level abstractions increasingly integrate item-specific
+information. Larger models, which have encountered V+\emph{up} phrases
+more frequently, show more divergent representations even in early
+hidden layers, suggesting that with sufficient exposure or capacity,
+storage-like behavior becomes a more pervasive organizational principle.
+
+Holistic storage is itself a form of exemplar-based representation:
+rather than computing a phrase from its parts each time, the whole
+phrase is represented as a stored unit. If holistic storage and
+grammatical abstraction arise from the same exemplar-based process, the
+computation--storage tradeoff may be a continuum rather than a binary.
+Transformer models offer a potential computational instantiation of this
+view: they encode no explicit rules, yet develop frequency- and
+predictability-graded holistic representations purely from
+distributional exposure, suggesting that exemplar-based generalization
+is sufficient to produce the patterns observed in human behavior.
+
+Overall, the present study demonstrates another dimension upon which
+LLMs and even ASR models' behavior resembles that of humans, providing
+further evidence for usage-based theories of holistic storage. More
+broadly, the results suggest that Transformer architectures may serve as
+a productive modeling framework for investigating not just whether
+human-like storage patterns emerge, but \emph{how} and \emph{when} they
+do so, and at a level of mechanistic detail that behavioral data alone
+cannot provide.
+
+\section{Limitations}\label{limitations}
+
+The primary limitation is that we examined only one construction
+(V+\emph{up} phrases) and in one language (English). We look forward to
+expanding the present study to other languages and other constructions
+in future work. We also only examined representations at the final
+checkpoint; however, we look forward to examining the emergence of
+storage as a function of training dynamics in the future.
 
 \clearpage
 \bibliography{references}
@@ -317,9 +815,112 @@ predictor.}
 
 \onecolumn
 
-\section{Appendix}\label{appendix}
+\appendix
 
-\subsection{Test Set Items}\label{test-set-items}
+\section{BabyLM Model Training}\label{babylm-model-training}
+
+Models were trained from random initialization for 20 epochs using the
+AdamW optimizer with fused weight updates and bfloat16 mixed precision.
+The learning rate was set to \(3 \times 10^{-4}\) for the 125M model and
+\(1 \times 10^{-4}\) for the 350M and 1.3B models, each preceded by a
+linear warmup over 10\% of total training steps. Training was
+distributed across two NVIDIA A100 80GB GPUs. Hyperparameter details are
+given in Table~\ref{tbl-hyperparams}.
+
+\begin{table}[H]
+
+\centering{
+
+\begin{tabular}{llll}
+\toprule
+Parameter & OPT-125M & OPT-350M & OPT-1.3B\\
+\midrule
+Hidden size & 768 & 1,024 & 2,048\\
+Attention heads & 12 & 16 & 32\\
+Layers & 12 & 24 & 24\\
+FFN intermediate size & 3,072 & 4,096 & 8,192\\
+Vocabulary size & 8,192 & 8,192 & 8,192\\
+Context length (tokens) & 1,024 & 1,024 & 1,024\\
+Batch size (per device) & 400 & 200 & 100\\
+Learning rate & $3\times10^{-4}$ & $1\times10^{-4}$ & $1\times10^{-4}$\\
+Warmup steps & 366 & 732 & 1,465\\
+Training epochs & 20 & 20 & 20\\
+Optimizer & AdamW (fused) & AdamW (fused) & AdamW (fused)\\
+Precision & bfloat16 & bfloat16 & bfloat16\\
+\bottomrule
+\end{tabular}
+
+}
+
+\caption{\label{tbl-hyperparams}Hyperparameters for the three BabyLM
+models. All models share a BPE tokenizer (vocabulary size 8,192) trained
+on the BabyLM corpus. Training used two NVIDIA A100 80GB GPUs with
+distributed data parallelism.}
+
+\end{table}%
+
+\clearpage
+
+\section{BabyLM Model Convergence}\label{babylm-model-convergence}
+
+All three models trained to completion over 20 epochs, with training
+loss decreasing monotonically throughout (Figure~\ref{fig-train-loss}).
+Final gradient norms were small for all models (0.16, 0.24, and 0.38 for
+the 125M, 350M, and 1.3B models, respectively), and the learning rate
+decayed to zero at the end of training, consistent with full convergence
+under the scheduled warmup-then-decay regime. No signs of loss
+divergence or instability were observed.
+
+The 1.3B model achieves the lowest training loss (2.55) and validation
+perplexity (15.18), as expected given its greater capacity
+(Table~\ref{tbl-val-perplexity}). The 350M model, however, shows
+slightly elevated training loss (2.63) and validation perplexity (18.86)
+relative to the 125M model (training loss 2.55; validation perplexity
+16.81). This is likely attributable to the lower learning rate applied
+to the 350M model (\(1 \times 10^{-4}\) vs.~\(3 \times 10^{-4}\) for the
+125M), which, combined with a relatively modest dataset size of 150M
+tokens, may have produced slower effective convergence. The effect is
+small and does not affect our qualitative comparisons, but we note it
+here for completeness.
+
+\begin{figure}[H]
+
+\centering{
+
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-train-loss-1.pdf}}
+
+}
+
+\caption{\label{fig-train-loss}Training loss over 20 epochs for each
+BabyLM model. Loss is logged every 10 gradient steps.}
+
+\end{figure}%
+
+\begin{table}[H]
+
+\centering{
+
+\begin{tabular}{lrr}
+\toprule
+Model & Val. loss & Perplexity\\
+\midrule
+OPT-125M & 2.82 & 16.81\\
+OPT-350M & 2.94 & 18.86\\
+OPT-1.3B & 2.72 & 15.18\\
+\bottomrule
+\end{tabular}
+
+}
+
+\caption{\label{tbl-val-perplexity}Final validation loss and perplexity
+for each BabyLM model, evaluated on the BabyLM development set after 20
+epochs of training.}
+
+\end{table}%
+
+\clearpage
+
+\section{Test Set Items}\label{test-set-items}
 
 \begin{table}[H]
 
@@ -340,14 +941,14 @@ Whisper decoder & 1426 & 243412 & 960--103,842,740 & -4.08 & -10.98--2.74\\
 
 \caption{\label{tbl-test-items}Test set statistics for all experiments.
 Only items with a valid (non-zero) predictability estimate are included.
-Frequency is the raw corpus count; predictability is
-logit(predictability). BabyLM models (125M, 350M, 1.3B) share identical
-items and corpus statistics. Whisper encoder and decoder evaluate the
-same audio items with Dolma-derived frequency counts.}
+Frequency is the raw corpus count; predictability is the log odds (see
+Equation~\ref{eq-logit-predic}). BabyLM models (125M, 350M, 1.3B) share
+identical items and corpus statistics. Whisper encoder and decoder
+evaluate the same audio items with Dolma-derived frequency counts.}
 
 \end{table}%
 
-\subsection{Experiment 1: UP
+\section{Experiment 1: UP
 Independently}\label{experiment-1-up-independently-1}
 
 \begin{table}[H]
@@ -382,58 +983,22 @@ sentence.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-OLMo-3 7B & Intercept & 18.59 & 0.01 & {}[18.57, 18.61] & 100.0\\
-OLMo-3 7B & Freq & -0.11 & 0.01 & {}[-0.13, -0.09] & 0.0\\
-OLMo-3 7B & Predic. & -0.13 & 0.01 & {}[-0.16, -0.11] & 0.0\\
-OLMo-3 7B & Freq:Predic. & -0.10 & 0.01 & {}[-0.12, -0.08] & 0.0\\
-BabyLM 125M & Intercept & 10.76 & 0.02 & {}[10.72, 10.80] & 100.0\\
-BabyLM 125M & Freq & -0.06 & 0.02 & {}[-0.09, -0.02] & 0.4\\
-BabyLM 125M & c\_log\_ftp & -0.02 & 0.02 & {}[-0.06, 0.02] & 13.3\\
-BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.11 & 0.02 & {}[-0.15, -0.07] & 0.0\\
-BabyLM 350M & Intercept & 13.34 & 0.01 & {}[13.33, 13.36] & 100.0\\
-BabyLM 350M & Freq & -0.05 & 0.01 & {}[-0.06, -0.03] & 0.0\\
-BabyLM 350M & c\_log\_ftp & 0.05 & 0.01 & {}[0.03, 0.06] & 100.0\\
-BabyLM 350M & c\_log\_freq:c\_log\_ftp & -0.01 & 0.01 & {}[-0.03, 0.00] & 9.3\\
-BabyLM 1.3B & Intercept & 18.04 & 0.03 & {}[17.98, 18.11] & 100.0\\
-BabyLM 1.3B & Freq & 0.09 & 0.03 & {}[0.03, 0.15] & 99.7\\
-BabyLM 1.3B & c\_log\_ftp & -0.04 & 0.03 & {}[-0.10, 0.02] & 8.5\\
-BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & 0.01 & 0.03 & {}[-0.05, 0.08] & 66.6\\
-\bottomrule
-\end{tabular}
-
-}
-
-\caption{\label{tbl-exp1-joint-first}Joint frequency × predictability
-model at the first layer for UP independently. Estimates are from
-Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
-indicates the percentage of posterior samples with a positive estimate.}
-
-\end{table}%
-
-\begin{table}[H]
-
-\centering{
-
-\begin{tabular}{llrrlr}
-\toprule
-Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
-\midrule
 OLMo-3 7B & Intercept & 10.29 & 0.04 & {}[10.22, 10.37] & 100.0\\
 OLMo-3 7B & Freq & -0.57 & 0.04 & {}[-0.65, -0.49] & 0.0\\
 OLMo-3 7B & Predic. & -1.64 & 0.04 & {}[-1.72, -1.56] & 0.0\\
 OLMo-3 7B & Freq:Predic. & 0.03 & 0.04 & {}[-0.05, 0.10] & 74.5\\
 BabyLM 125M & Intercept & 8.72 & 0.04 & {}[8.65, 8.80] & 100.0\\
 BabyLM 125M & Freq & -0.30 & 0.04 & {}[-0.37, -0.23] & 0.0\\
-BabyLM 125M & c\_log\_ftp & -0.07 & 0.04 & {}[-0.14, 0.01] & 3.2\\
-BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.12 & 0.04 & {}[-0.20, -0.05] & 0.1\\
+BabyLM 125M & Predic. & -0.07 & 0.04 & {}[-0.14, 0.01] & 3.2\\
+BabyLM 125M & Freq:Predic. & -0.12 & 0.04 & {}[-0.20, -0.05] & 0.1\\
 BabyLM 350M & Intercept & 8.43 & 0.04 & {}[8.35, 8.50] & 100.0\\
 BabyLM 350M & Freq & -0.30 & 0.04 & {}[-0.38, -0.23] & 0.0\\
-BabyLM 350M & c\_log\_ftp & -0.04 & 0.04 & {}[-0.11, 0.04] & 18.2\\
-BabyLM 350M & c\_log\_freq:c\_log\_ftp & -0.16 & 0.04 & {}[-0.24, -0.08] & 0.0\\
+BabyLM 350M & Predic. & -0.04 & 0.04 & {}[-0.11, 0.04] & 18.2\\
+BabyLM 350M & Freq:Predic. & -0.16 & 0.04 & {}[-0.24, -0.08] & 0.0\\
 BabyLM 1.3B & Intercept & 8.57 & 0.05 & {}[8.47, 8.68] & 100.0\\
 BabyLM 1.3B & Freq & -0.27 & 0.05 & {}[-0.38, -0.17] & 0.0\\
-BabyLM 1.3B & c\_log\_ftp & -0.20 & 0.05 & {}[-0.30, -0.10] & 0.0\\
-BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & -0.14 & 0.05 & {}[-0.24, -0.03] & 0.7\\
+BabyLM 1.3B & Predic. & -0.20 & 0.05 & {}[-0.30, -0.10] & 0.0\\
+BabyLM 1.3B & Freq:Predic. & -0.14 & 0.05 & {}[-0.24, -0.03] & 0.7\\
 \bottomrule
 \end{tabular}
 
@@ -446,9 +1011,55 @@ indicates the percentage of posterior samples with a positive estimate.}
 
 \end{table}%
 
+\begin{table}[H]
+
+\centering{
+
+\begin{tabular}{llrrl}
+\toprule
+Model & Predictor & EDF & F & p\\
+\midrule
+OLMo-3 7B & Frequency & 23.48 & 39510.17 & < 0.001\\
+BabyLM 125M & Frequency & 21.52 & 3529.76 & < 0.001\\
+BabyLM 350M & Frequency & 21.62 & 26424.27 & < 0.001\\
+BabyLM 1.3B & Frequency & 21.00 & 28461.84 & < 0.001\\
+OLMo-3 7B & Predictability & 23.44 & 41912.50 & < 0.001\\
+BabyLM 125M & Predictability & 22.52 & 3421.22 & < 0.001\\
+BabyLM 350M & Predictability & 22.98 & 25267.09 & < 0.001\\
+BabyLM 1.3B & Predictability & 22.47 & 27285.85 & < 0.001\\
+\bottomrule
+\end{tabular}
+
+}
+
+\caption{\label{tbl-exp1-gam-smooth}GAM tensor-product smooth summary
+for UP independently. EDF = estimated degrees of freedom; p = p-value
+for the te(predictor, layer) smooth term.}
+
+\end{table}%
+
+\begin{figure}[H]
+
+\centering{
+
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp1-gam-diffs-1.pdf}}
+
+}
+
+\caption{\label{fig-exp1-gam-diffs}Layer-by-layer difference in
+GAM-predicted logit between high (90th percentile) and low (10th
+percentile) predictor values, for UP independently. Green = frequency
+effect; yellow = predictability effect. Inner and outer shaded ribbons
+show 80\% and 95\% confidence intervals derived from the GAM standard
+error. A negative difference indicates that high-predictor phrases yield
+a lower classifier logit (i.e., their representation of \emph{up} is
+less similar to the standalone class).}
+
+\end{figure}%
+
 \clearpage
 
-\subsection{Experiment 2: UP as
+\section{Experiment 2: UP as
 Subword}\label{experiment-2-up-as-subword-1}
 
 \begin{table}[H]
@@ -484,58 +1095,22 @@ tokenizer coverage.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-OLMo-3 7B & Intercept & 9.75 & 0.01 & {}[9.73, 9.76] & 100.0\\
-OLMo-3 7B & Freq & -0.09 & 0.01 & {}[-0.11, -0.07] & 0.0\\
-OLMo-3 7B & Predic. & 0.01 & 0.01 & {}[-0.00, 0.03] & 97.2\\
-OLMo-3 7B & Freq:Predic. & -0.03 & 0.01 & {}[-0.05, -0.02] & 0.0\\
-BabyLM 125M & Intercept & 12.40 & 0.04 & {}[12.32, 12.49] & 100.0\\
-BabyLM 125M & Freq & 0.15 & 0.04 & {}[0.06, 0.23] & 100.0\\
-BabyLM 125M & c\_log\_ftp & -0.19 & 0.04 & {}[-0.28, -0.11] & 0.0\\
-BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.06 & 0.05 & {}[-0.15, 0.03] & 9.3\\
-BabyLM 350M & Intercept & 14.47 & 0.02 & {}[14.44, 14.50] & 100.0\\
-BabyLM 350M & Freq & -0.07 & 0.02 & {}[-0.10, -0.03] & 0.0\\
-BabyLM 350M & c\_log\_ftp & 0.05 & 0.02 & {}[0.02, 0.08] & 99.9\\
-BabyLM 350M & c\_log\_freq:c\_log\_ftp & 0.00 & 0.02 & {}[-0.04, 0.03] & 43.2\\
-BabyLM 1.3B & Intercept & 17.53 & 0.04 & {}[17.46, 17.61] & 100.0\\
-BabyLM 1.3B & Freq & -0.04 & 0.04 & {}[-0.11, 0.04] & 15.5\\
-BabyLM 1.3B & c\_log\_ftp & -0.03 & 0.04 & {}[-0.10, 0.05] & 23.9\\
-BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & 0.00 & 0.04 & {}[-0.08, 0.08] & 48.7\\
-\bottomrule
-\end{tabular}
-
-}
-
-\caption{\label{tbl-exp2-joint-first}Joint frequency × predictability
-model at the first layer for UP as subword. Estimates are from Bayesian
-linear mixed-effects models (brms); \% \textgreater{} 0 indicates the
-percentage of posterior samples with a positive estimate.}
-
-\end{table}%
-
-\begin{table}[H]
-
-\centering{
-
-\begin{tabular}{llrrlr}
-\toprule
-Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
-\midrule
 OLMo-3 7B & Intercept & 12.34 & 0.04 & {}[12.26, 12.42] & 100.0\\
 OLMo-3 7B & Freq & -0.48 & 0.04 & {}[-0.57, -0.40] & 0.0\\
 OLMo-3 7B & Predic. & -1.04 & 0.04 & {}[-1.12, -0.96] & 0.0\\
 OLMo-3 7B & Freq:Predic. & -0.05 & 0.04 & {}[-0.13, 0.03] & 9.3\\
 BabyLM 125M & Intercept & 12.26 & 0.07 & {}[12.13, 12.40] & 100.0\\
 BabyLM 125M & Freq & -0.45 & 0.07 & {}[-0.59, -0.32] & 0.0\\
-BabyLM 125M & c\_log\_ftp & 0.11 & 0.07 & {}[-0.03, 0.24] & 93.2\\
-BabyLM 125M & c\_log\_freq:c\_log\_ftp & -0.17 & 0.07 & {}[-0.32, -0.03] & 0.9\\
+BabyLM 125M & Predic. & 0.11 & 0.07 & {}[-0.03, 0.24] & 93.2\\
+BabyLM 125M & Freq:Predic. & -0.17 & 0.07 & {}[-0.32, -0.03] & 0.9\\
 BabyLM 350M & Intercept & 12.70 & 0.06 & {}[12.57, 12.82] & 100.0\\
 BabyLM 350M & Freq & -0.48 & 0.06 & {}[-0.60, -0.36] & 0.0\\
-BabyLM 350M & c\_log\_ftp & 0.00 & 0.06 & {}[-0.12, 0.13] & 52.2\\
-BabyLM 350M & c\_log\_freq:c\_log\_ftp & -0.12 & 0.07 & {}[-0.25, 0.01] & 3.4\\
+BabyLM 350M & Predic. & 0.00 & 0.06 & {}[-0.12, 0.13] & 52.2\\
+BabyLM 350M & Freq:Predic. & -0.12 & 0.07 & {}[-0.25, 0.01] & 3.4\\
 BabyLM 1.3B & Intercept & 10.98 & 0.05 & {}[10.88, 11.07] & 100.0\\
 BabyLM 1.3B & Freq & -0.22 & 0.05 & {}[-0.31, -0.12] & 0.0\\
-BabyLM 1.3B & c\_log\_ftp & -0.07 & 0.05 & {}[-0.17, 0.02] & 6.2\\
-BabyLM 1.3B & c\_log\_freq:c\_log\_ftp & -0.04 & 0.05 & {}[-0.14, 0.07] & 24.5\\
+BabyLM 1.3B & Predic. & -0.07 & 0.05 & {}[-0.17, 0.02] & 6.2\\
+BabyLM 1.3B & Freq:Predic. & -0.04 & 0.05 & {}[-0.14, 0.07] & 24.5\\
 \bottomrule
 \end{tabular}
 
@@ -548,9 +1123,55 @@ percentage of posterior samples with a positive estimate.}
 
 \end{table}%
 
+\begin{table}[H]
+
+\centering{
+
+\begin{tabular}{llrrl}
+\toprule
+Model & Predictor & EDF & F & p\\
+\midrule
+OLMo-3 7B & Frequency & 23.21 & 52988.02 & < 0.001\\
+BabyLM 125M & Frequency & 18.33 & 543.59 & < 0.001\\
+BabyLM 350M & Frequency & 21.44 & 6564.50 & < 0.001\\
+BabyLM 1.3B & Frequency & 20.68 & 20878.03 & < 0.001\\
+OLMo-3 7B & Predictability & 23.13 & 54126.21 & < 0.001\\
+BabyLM 125M & Predictability & 22.15 & 517.34 & < 0.001\\
+BabyLM 350M & Predictability & 22.30 & 6379.07 & < 0.001\\
+BabyLM 1.3B & Predictability & 21.51 & 20339.52 & < 0.001\\
+\bottomrule
+\end{tabular}
+
+}
+
+\caption{\label{tbl-exp2-gam-smooth}GAM tensor-product smooth summary
+for UP as subword. EDF = estimated degrees of freedom; p = p-value for
+the te(predictor, layer) smooth term.}
+
+\end{table}%
+
+\begin{figure}[H]
+
+\centering{
+
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp2-gam-diffs-1.pdf}}
+
+}
+
+\caption{\label{fig-exp2-gam-diffs}Layer-by-layer difference in
+GAM-predicted logit between high (90th percentile) and low (10th
+percentile) predictor values, for UP as subword. Green = frequency
+effect; yellow = predictability effect. Inner and outer shaded ribbons
+show 80\% and 95\% confidence intervals derived from the GAM standard
+error. A negative difference indicates that high-predictor phrases yield
+a lower classifier logit (i.e., their representation of \emph{up} is
+less similar to the standalone class).}
+
+\end{figure}%
+
 \clearpage
 
-\subsection{Experiment 3: Whisper}\label{experiment-3-whisper}
+\section{Experiment 3: Whisper}\label{experiment-3-whisper}
 
 \begin{table}[H]
 
@@ -582,34 +1203,6 @@ same segment.}
 \toprule
 Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
 \midrule
-Encoder & Intercept & 12.46 & 0.06 & {}[12.34, 12.58] & 100.0\\
-Encoder & Freq & -0.30 & 0.06 & {}[-0.42, -0.18] & 0.0\\
-Encoder & Predic. & 0.35 & 0.06 & {}[0.23, 0.48] & 100.0\\
-Encoder & Freq:Predic. & -0.04 & 0.06 & {}[-0.15, 0.08] & 26.4\\
-Decoder & Intercept & 9.25 & 0.02 & {}[9.21, 9.28] & 100.0\\
-Decoder & Freq & 0.07 & 0.02 & {}[0.03, 0.10] & 100.0\\
-Decoder & Predic. & -0.09 & 0.02 & {}[-0.12, -0.06] & 0.0\\
-Decoder & Freq:Predic. & -0.02 & 0.02 & {}[-0.05, 0.01] & 15.7\\
-\bottomrule
-\end{tabular}
-
-}
-
-\caption{\label{tbl-exp3-joint-first}Joint frequency × predictability
-model at the first layer for Whisper encoder and decoder. Estimates are
-from Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
-indicates the percentage of posterior samples with a positive estimate.}
-
-\end{table}%
-
-\begin{table}[H]
-
-\centering{
-
-\begin{tabular}{llrrlr}
-\toprule
-Model & Coef & Est. & Err. & 95\% CI & \% > 0\\
-\midrule
 Encoder & Intercept & 9.21 & 0.03 & {}[9.15, 9.26] & 100.0\\
 Encoder & Freq & 0.12 & 0.03 & {}[0.06, 0.17] & 100.0\\
 Encoder & Predic. & -0.07 & 0.03 & {}[-0.12, -0.01] & 1.3\\
@@ -629,6 +1222,48 @@ from Bayesian linear mixed-effects models (brms); \% \textgreater{} 0
 indicates the percentage of posterior samples with a positive estimate.}
 
 \end{table}%
+
+\begin{table}[H]
+
+\centering{
+
+\begin{tabular}{llrrl}
+\toprule
+Model & Predictor & EDF & F & p\\
+\midrule
+Encoder & Frequency & 13.12 & 521.72 & < 0.001\\
+Decoder & Frequency & 22.14 & 543.35 & < 0.001\\
+Encoder & Predictability & 18.98 & 377.97 & < 0.001\\
+Decoder & Predictability & 22.35 & 562.36 & < 0.001\\
+\bottomrule
+\end{tabular}
+
+}
+
+\caption{\label{tbl-exp3-gam-smooth}GAM tensor-product smooth summary
+for Whisper encoder and decoder. EDF = estimated degrees of freedom; p =
+p-value for the te(predictor, layer) smooth term.}
+
+\end{table}%
+
+\begin{figure}[H]
+
+\centering{
+
+\pandocbounded{\includegraphics[keepaspectratio]{writeup_files/figure-pdf/fig-exp3-gam-diffs-1.pdf}}
+
+}
+
+\caption{\label{fig-exp3-gam-diffs}Layer-by-layer difference in
+GAM-predicted logit between high (90th percentile) and low (10th
+percentile) predictor values, for Whisper encoder and decoder. Green =
+frequency effect; yellow = predictability effect. Inner and outer shaded
+ribbons show 80\% and 95\% confidence intervals derived from the GAM
+standard error. A negative difference indicates that high-predictor
+phrases yield a lower classifier logit (i.e., their representation of
+\emph{up} is less similar to the standalone class).}
+
+\end{figure}%
 
 \clearpage
 
