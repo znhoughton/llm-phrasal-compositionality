@@ -10,6 +10,24 @@ library(mgcv)
 library(tidybayes)
 library(jsonlite)
 
+# ── Environment check ──────────────────────────────────────────────────────────
+# This script must be run from the project root (llm-phrasal-compositionality/).
+probe_file = "Data/olmo-3-7b/Data_up/all_layers_results.csv"
+if (!file.exists(probe_file)) {
+  stop("Working directory must be the project root (llm-phrasal-compositionality/). ",
+       "Current directory: ", getwd(), "\n",
+       "In RStudio: Session > Set Working Directory > To Project Directory, ",
+       "then re-run.")
+}
+first_line = readLines(probe_file, n = 1, warn = FALSE)
+lfs_data_available = !grepl("git-lfs", first_line, fixed = TRUE)
+if (!lfs_data_available) {
+  message("NOTE: Data files are Git LFS pointers (not yet pulled). ",
+          "Sections 1-4 will be skipped. ",
+          "Run 'git lfs pull' to enable them. Section 5b runs fine without raw data.")
+}
+rm(probe_file, first_line)
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 # Paths are relative to the project root (llm-phrasal-compositionality/).
 OLMO_CACHE_DIR      = "model_cache/olmo"
@@ -34,6 +52,8 @@ WH_LABELS     = c("encoder"  = "Encoder",      "decoder"  = "Decoder")
 olmo_rds = function(name) readRDS(file.path(OLMO_CACHE_DIR, paste0(name, ".rds")))
 blm_rds  = function(name) readRDS(file.path(BLM_CACHE_DIR,  paste0(name, ".rds")))
 wh_rds   = function(name) readRDS(file.path(WH_CACHE_DIR,   paste0(name, ".rds")))
+
+if (lfs_data_available) {
 
 # ── 1. Raw data ────────────────────────────────────────────────────────────────
 message("Loading raw data...")
@@ -75,7 +95,8 @@ ftp_lookup = read_csv("Data/ftp_lookup.csv", show_col_types = FALSE) %>%
 load_whisper_component = function(path, comp) {
   read_csv(path, show_col_types = FALSE) %>%
     select(-any_of(c("ftp", "predic"))) %>%
-    mutate(component = comp, log_freq = log(frequency),
+    mutate(component = comp, frequency = suppressWarnings(as.numeric(frequency)),
+           log_freq = log(frequency),
            verb_up_chr = as.character(verb_up)) %>%
     left_join(ftp_lookup, by = c("verb_up_chr" = "verb_up")) %>%
     filter(!is.na(predic)) %>%
@@ -268,6 +289,200 @@ bind_rows(lapply(WH_COMPONENTS, function(comp)
                    WH_N_LAYERS, WH_LABELS[[comp]]))) %>%
   write_csv(file.path(RESULTS_DIR, "ddata_predic_wh.csv"))
 
+} # end if (lfs_data_available) — sections 1-5
+
+# ── 5b. GAM full prediction grids (for heatmaps) ──────────────────────────────
+# STANDALONE: requires only model_cache/ RDS files. No raw data or items CSVs needed.
+# Predictor ranges are extracted directly from model$model (the training frame stored
+# inside each fitted GAM object). Run this block on its own if needed.
+message("Computing GAM prediction grids for heatmaps...")
+
+freq_grid_data = function(model, n_layers, panel, n_pred = 60) {
+  log_freq_vec = model$model$log_freq
+  dummy_verb   = model$model$verb_up[1]
+  layer_seq    = 0:(n_layers - 1)
+  pred_seq     = seq(quantile(log_freq_vec, 0.01, na.rm = TRUE),
+                     quantile(log_freq_vec, 0.99, na.rm = TRUE), length.out = n_pred)
+  newdata = expand.grid(layer = layer_seq, log_freq = pred_seq) %>%
+    mutate(verb_up = dummy_verb)
+  fit = as.numeric(predict(model, newdata = newdata, exclude = "s(verb_up)"))
+  newdata %>% mutate(fit = fit, panel = panel) %>% select(layer, log_freq, fit, panel)
+}
+
+predic_grid_data = function(model, n_layers, panel, n_pred = 60) {
+  log_predic_vec = model$model$log_predic
+  dummy_verb     = model$model$verb_up[1]
+  layer_seq      = 0:(n_layers - 1)
+  pred_seq       = seq(quantile(log_predic_vec, 0.01, na.rm = TRUE),
+                       quantile(log_predic_vec, 0.99, na.rm = TRUE), length.out = n_pred)
+  newdata = expand.grid(layer = layer_seq, log_predic = pred_seq) %>%
+    mutate(verb_up = dummy_verb)
+  fit = as.numeric(predict(model, newdata = newdata, exclude = "s(verb_up)"))
+  newdata %>% mutate(fit = fit, panel = panel) %>% select(layer, log_predic, fit, panel)
+}
+
+# Load GAM models (same as section 5; safe to re-load if already in memory)
+gam_fi  = olmo_rds("model_freq_layer_up_independently")
+gam_fs  = olmo_rds("model_freq_layer_up_subword")
+gam_pi  = olmo_rds("model_predic_layer_up_independently")
+gam_ps  = olmo_rds("model_predic_layer_up_subword")
+gam_blm_fi = setNames(lapply(BLM_TAGS, function(t) blm_rds(paste0("model_freq_layer_indep_",   blm_slug(t)))), BLM_TAGS)
+gam_blm_fs = setNames(lapply(BLM_TAGS, function(t) blm_rds(paste0("model_freq_layer_sub_",     blm_slug(t)))), BLM_TAGS)
+gam_blm_pi = setNames(lapply(BLM_TAGS, function(t) blm_rds(paste0("model_predic_layer_indep_", blm_slug(t)))), BLM_TAGS)
+gam_blm_ps = setNames(lapply(BLM_TAGS, function(t) blm_rds(paste0("model_predic_layer_sub_",   blm_slug(t)))), BLM_TAGS)
+gam_wh_f   = setNames(lapply(WH_COMPONENTS, function(c) wh_rds(paste0("model_freq_layer_",   c))), WH_COMPONENTS)
+gam_wh_p   = setNames(lapply(WH_COMPONENTS, function(c) wh_rds(paste0("model_predic_layer_", c))), WH_COMPONENTS)
+
+bind_rows(
+  freq_grid_data(gam_fi, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    freq_grid_data(gam_blm_fi[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "grid_freq_indep.csv"))
+
+bind_rows(
+  freq_grid_data(gam_fs, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    freq_grid_data(gam_blm_fs[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "grid_freq_sub.csv"))
+
+bind_rows(lapply(WH_COMPONENTS, function(c)
+  freq_grid_data(gam_wh_f[[c]], WH_N_LAYERS, WH_LABELS[[c]]))) %>%
+  write_csv(file.path(RESULTS_DIR, "grid_freq_wh.csv"))
+
+bind_rows(
+  predic_grid_data(gam_pi, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    predic_grid_data(gam_blm_pi[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "grid_predic_indep.csv"))
+
+bind_rows(
+  predic_grid_data(gam_ps, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    predic_grid_data(gam_blm_ps[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "grid_predic_sub.csv"))
+
+bind_rows(lapply(WH_COMPONENTS, function(c)
+  predic_grid_data(gam_wh_p[[c]], WH_N_LAYERS, WH_LABELS[[c]]))) %>%
+  write_csv(file.path(RESULTS_DIR, "grid_predic_wh.csv"))
+
+# ── 5c. GAM smooth summary tables ─────────────────────────────────────────────
+# Extracts EDF, F-statistic, and p-value for the te() smooth from each GAM.
+# Uses the same model objects loaded in section 5b — standalone, no raw data needed.
+message("Extracting GAM smooth summaries...")
+
+gam_smooth_row = function(model, model_name, predictor) {
+  st    = summary(model)$s.table
+  te_row = st[grep("^te\\(", rownames(st)), , drop = FALSE]
+  if (nrow(te_row) == 0) te_row = st[1, , drop = FALSE]
+  tibble(
+    Model     = model_name,
+    Predictor = predictor,
+    edf       = te_row[1, "edf"],
+    f_stat    = te_row[1, "F"],
+    p_value   = te_row[1, "p-value"]
+  )
+}
+
+bind_rows(
+  gam_smooth_row(gam_fi, "OLMo-3 7B", "Frequency"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    gam_smooth_row(gam_blm_fi[[t]], BLM_LABELS[[t]], "Frequency"))),
+  gam_smooth_row(gam_pi, "OLMo-3 7B", "Predictability"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    gam_smooth_row(gam_blm_pi[[t]], BLM_LABELS[[t]], "Predictability")))
+) %>% write_csv(file.path(RESULTS_DIR, "gam_smooth_indep.csv"))
+
+bind_rows(
+  gam_smooth_row(gam_fs, "OLMo-3 7B", "Frequency"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    gam_smooth_row(gam_blm_fs[[t]], BLM_LABELS[[t]], "Frequency"))),
+  gam_smooth_row(gam_ps, "OLMo-3 7B", "Predictability"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    gam_smooth_row(gam_blm_ps[[t]], BLM_LABELS[[t]], "Predictability")))
+) %>% write_csv(file.path(RESULTS_DIR, "gam_smooth_sub.csv"))
+
+bind_rows(
+  gam_smooth_row(gam_wh_f[["encoder"]], "Encoder", "Frequency"),
+  gam_smooth_row(gam_wh_f[["decoder"]], "Decoder", "Frequency"),
+  gam_smooth_row(gam_wh_p[["encoder"]], "Encoder", "Predictability"),
+  gam_smooth_row(gam_wh_p[["decoder"]], "Decoder", "Predictability")
+) %>% write_csv(file.path(RESULTS_DIR, "gam_smooth_wh.csv"))
+
+# ── 5d. GAM diff data (standalone) ────────────────────────────────────────────
+# Produces ddata_*.csv using model$model instead of raw data frames.
+# Safe to run without LFS data — requires only the GAM RDS files from section 5b.
+message("Computing GAM diff data (standalone)...")
+
+freq_diff_sa = function(model, n_layers, panel) {
+  mdat        = model$model
+  log_freq_lo = quantile(mdat$log_freq, 0.1, na.rm = TRUE)
+  log_freq_hi = quantile(mdat$log_freq, 0.9, na.rm = TRUE)
+  newdata = expand.grid(layer = 0:(n_layers - 1), freq_level = c("low", "high")) %>%
+    mutate(log_freq = ifelse(freq_level == "low", log_freq_lo, log_freq_hi),
+           verb_up  = mdat$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = TRUE, exclude = "s(verb_up)")
+  newdata %>%
+    mutate(fit = preds$fit, se = preds$se.fit) %>%
+    select(layer, freq_level, fit, se) %>%
+    pivot_wider(names_from = freq_level, values_from = c(fit, se)) %>%
+    mutate(diff    = fit_high - fit_low,
+           se_diff = sqrt(se_high^2 + se_low^2),
+           lo95    = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
+           lo80    = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff,
+           panel   = panel)
+}
+
+predic_diff_sa = function(model, n_layers, panel) {
+  mdat      = model$model
+  predic_lo = quantile(mdat$log_predic, 0.1, na.rm = TRUE)
+  predic_hi = quantile(mdat$log_predic, 0.9, na.rm = TRUE)
+  newdata = expand.grid(layer = 0:(n_layers - 1), predic_level = c("low", "high")) %>%
+    mutate(log_predic = ifelse(predic_level == "low", predic_lo, predic_hi),
+           verb_up    = mdat$verb_up[1])
+  preds = predict(model, newdata = newdata, se.fit = TRUE, exclude = "s(verb_up)")
+  newdata %>%
+    mutate(fit = preds$fit, se = preds$se.fit) %>%
+    select(layer, predic_level, fit, se) %>%
+    pivot_wider(names_from = predic_level, values_from = c(fit, se)) %>%
+    mutate(diff    = fit_high - fit_low,
+           se_diff = sqrt(se_high^2 + se_low^2),
+           lo95    = diff - 1.96 * se_diff, hi95 = diff + 1.96 * se_diff,
+           lo80    = diff - 1.28 * se_diff, hi80 = diff + 1.28 * se_diff,
+           panel   = panel)
+}
+
+bind_rows(
+  freq_diff_sa(gam_fi, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    freq_diff_sa(gam_blm_fi[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_freq_indep.csv"))
+
+bind_rows(
+  freq_diff_sa(gam_fs, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    freq_diff_sa(gam_blm_fs[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_freq_sub.csv"))
+
+bind_rows(lapply(WH_COMPONENTS, function(c)
+  freq_diff_sa(gam_wh_f[[c]], WH_N_LAYERS, WH_LABELS[[c]]))) %>%
+  write_csv(file.path(RESULTS_DIR, "ddata_freq_wh.csv"))
+
+bind_rows(
+  predic_diff_sa(gam_pi, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    predic_diff_sa(gam_blm_pi[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_predic_indep.csv"))
+
+bind_rows(
+  predic_diff_sa(gam_ps, OLMO_N_LAYERS, "OLMo-3 7B"),
+  bind_rows(lapply(BLM_TAGS, function(t)
+    predic_diff_sa(gam_blm_ps[[t]], BLM_N_LAYERS[[t]], BLM_LABELS[[t]])))
+) %>% write_csv(file.path(RESULTS_DIR, "ddata_predic_sub.csv"))
+
+bind_rows(lapply(WH_COMPONENTS, function(c)
+  predic_diff_sa(gam_wh_p[[c]], WH_N_LAYERS, WH_LABELS[[c]]))) %>%
+  write_csv(file.path(RESULTS_DIR, "ddata_predic_wh.csv"))
+
 # ── 6. brms table data ─────────────────────────────────────────────────────────
 message("Loading brms models and extracting posterior summaries...")
 
@@ -408,128 +623,132 @@ save_brms_table(list(
 ), "tbl_exp3_poly_joint_final.csv")
 
 # ── 7. Joint surface plot data ─────────────────────────────────────────────────
-message("Computing joint surface data (slow — calls fitted() on brms models)...")
+# Patches existing surface CSVs with 95% CI bands.
+# Uses the grid and scaling params already in each CSV plus model$data for verb_up.
+# No raw LFS data needed — works from brms RDS files alone.
+message("Adding 95% CI to surface CSVs (slow — calls fitted() on brms models)...")
 
-compute_surface_data = function(model, data, label, n_grid = 30) {
-  freq_rng   = seq(quantile(data$c_log_freq,   0.01), quantile(data$c_log_freq,   0.99), length.out = n_grid)
-  predic_rng = seq(quantile(data$c_log_predic, 0.01), quantile(data$c_log_predic, 0.99), length.out = n_grid)
-  grid = expand.grid(c_log_freq = freq_rng, c_log_predic = predic_rng) %>%
-    mutate(verb_up = data$verb_up[1])
-  # Older cached models used 'c_log_ftp' before the variable was renamed to 'c_log_predic'
-  if ("c_log_ftp" %in% rownames(fixef(model))) {
-    grid = rename(grid, c_log_ftp = c_log_predic)
+patch_surface_ci = function(csv_path, model_map) {
+  df      = read_csv(csv_path, show_col_types = FALSE)
+  df$q025 = NA_real_
+  df$q975 = NA_real_
+  for (lbl in unique(df$label)) {
+    model = model_map[[lbl]]
+    if (is.null(model)) { warning("No model for label: ", lbl); next }
+    idx  = which(df$label == lbl)
+    grid = df[idx, c("c_log_freq", "c_log_predic"), drop = FALSE]
+    if ("c_log_ftp" %in% rownames(fixef(model)))
+      grid = rename(grid, c_log_ftp = c_log_predic)
+    grid$verb_up = model$data$verb_up[1]
+    preds        = fitted(model, newdata = grid, re_formula = NA, summary = TRUE)
+    df$fit[idx]  = preds[, "Estimate"]
+    df$q025[idx] = preds[, "Q2.5"]
+    df$q975[idx] = preds[, "Q97.5"]
   }
-  preds    = fitted(model, newdata = grid, re_formula = NA, summary = TRUE)
-  grid$fit = preds[, "Estimate"]
-  # Normalize back so output CSVs always use c_log_predic regardless of model vintage
-  if ("c_log_ftp" %in% names(grid)) {
-    grid = rename(grid, c_log_predic = c_log_ftp)
-  }
-  grid %>%
-    mutate(
-      freq_mean   = mean(data$log_freq,   na.rm = TRUE),
-      freq_sd     = sd(data$log_freq,     na.rm = TRUE),
-      predic_mean = mean(data$log_predic, na.rm = TRUE),
-      predic_sd   = sd(data$log_predic,   na.rm = TRUE),
-      label       = label
-    ) %>%
-    select(-verb_up)
+  write_csv(df, csv_path)
+  invisible(df)
 }
 
 message("  Exp1 linear joint (OLMo)...")
-bind_rows(
-  compute_surface_data(olmo_brms_joint_indep_first, olmo_indep_first_predic, "OLMo \u2014 first layer"),
-  compute_surface_data(olmo_brms_joint_indep_final, olmo_indep_final_predic, "OLMo \u2014 final layer")
-) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_joint_olmo.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp1_joint_olmo.csv"),
+  list(
+    "OLMo — first layer" = olmo_brms_joint_indep_first,
+    "OLMo — final layer" = olmo_brms_joint_indep_final
+  )
+)
 
 message("  Exp1 linear joint (BabyLM)...")
-bind_rows(c(
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_joint_indep_first[[tag]],
-                         blm_indep_first_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_joint_indep_final[[tag]],
-                         blm_indep_final_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
-)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_joint_blm.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp1_joint_blm.csv"),
+  c(
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_joint_indep_first[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — first layer")),
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_joint_indep_final[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — final layer"))
+  )
+)
 
 message("  Exp2 linear joint (OLMo)...")
-bind_rows(
-  compute_surface_data(olmo_brms_joint_sub_first, olmo_sub_first_predic, "OLMo \u2014 first layer"),
-  compute_surface_data(olmo_brms_joint_sub_final, olmo_sub_final_predic, "OLMo \u2014 final layer")
-) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_joint_olmo.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp2_joint_olmo.csv"),
+  list(
+    "OLMo — first layer" = olmo_brms_joint_sub_first,
+    "OLMo — final layer" = olmo_brms_joint_sub_final
+  )
+)
 
 message("  Exp2 linear joint (BabyLM)...")
-bind_rows(c(
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_joint_sub_first[[tag]],
-                         blm_sub_first_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_joint_sub_final[[tag]],
-                         blm_sub_final_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
-)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_joint_blm.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp2_joint_blm.csv"),
+  c(
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_joint_sub_first[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — first layer")),
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_joint_sub_final[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — final layer"))
+  )
+)
 
 message("  Exp3 linear joint (Whisper)...")
-bind_rows(
-  compute_surface_data(wh_brms_joint_first[["encoder"]],
-                       whisper_first_predic %>% filter(component == "encoder"), "Encoder \u2014 first layer"),
-  compute_surface_data(wh_brms_joint_final[["encoder"]],
-                       whisper_final_predic %>% filter(component == "encoder"), "Encoder \u2014 final layer"),
-  compute_surface_data(wh_brms_joint_first[["decoder"]],
-                       whisper_first_predic %>% filter(component == "decoder"), "Decoder \u2014 first layer"),
-  compute_surface_data(wh_brms_joint_final[["decoder"]],
-                       whisper_final_predic %>% filter(component == "decoder"), "Decoder \u2014 final layer")
-) %>% write_csv(file.path(RESULTS_DIR, "surface_exp3_joint_wh.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp3_joint_wh.csv"),
+  c(
+    setNames(lapply(WH_COMPONENTS, function(comp) wh_brms_joint_first[[comp]]),
+             paste0(WH_LABELS[WH_COMPONENTS], " — first layer")),
+    setNames(lapply(WH_COMPONENTS, function(comp) wh_brms_joint_final[[comp]]),
+             paste0(WH_LABELS[WH_COMPONENTS], " — final layer"))
+  )
+)
 
 message("  Exp1 poly joint (OLMo)...")
-bind_rows(
-  compute_surface_data(olmo_brms_poly_joint_indep_first, olmo_indep_first_predic, "OLMo \u2014 first layer"),
-  compute_surface_data(olmo_brms_poly_joint_indep_final, olmo_indep_final_predic, "OLMo \u2014 final layer")
-) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_poly_olmo.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp1_poly_olmo.csv"),
+  list(
+    "OLMo — first layer" = olmo_brms_poly_joint_indep_first,
+    "OLMo — final layer" = olmo_brms_poly_joint_indep_final
+  )
+)
 
 message("  Exp1 poly joint (BabyLM)...")
-bind_rows(c(
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_poly_joint_indep_first[[tag]],
-                         blm_indep_first_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_poly_joint_indep_final[[tag]],
-                         blm_indep_final_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
-)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp1_poly_blm.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp1_poly_blm.csv"),
+  c(
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_poly_joint_indep_first[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — first layer")),
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_poly_joint_indep_final[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — final layer"))
+  )
+)
 
 message("  Exp2 poly joint (OLMo)...")
-bind_rows(
-  compute_surface_data(olmo_brms_poly_joint_sub_first, olmo_sub_first_predic, "OLMo \u2014 first layer"),
-  compute_surface_data(olmo_brms_poly_joint_sub_final, olmo_sub_final_predic, "OLMo \u2014 final layer")
-) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_poly_olmo.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp2_poly_olmo.csv"),
+  list(
+    "OLMo — first layer" = olmo_brms_poly_joint_sub_first,
+    "OLMo — final layer" = olmo_brms_poly_joint_sub_final
+  )
+)
 
 message("  Exp2 poly joint (BabyLM)...")
-bind_rows(c(
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_poly_joint_sub_first[[tag]],
-                         blm_sub_first_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 first layer"))),
-  lapply(BLM_TAGS, function(tag)
-    compute_surface_data(blm_brms_poly_joint_sub_final[[tag]],
-                         blm_sub_final_predic %>% filter(model == tag),
-                         paste0(BLM_LABELS[[tag]], " \u2014 final layer")))
-)) %>% write_csv(file.path(RESULTS_DIR, "surface_exp2_poly_blm.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp2_poly_blm.csv"),
+  c(
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_poly_joint_sub_first[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — first layer")),
+    setNames(lapply(BLM_TAGS, function(tag) blm_brms_poly_joint_sub_final[[tag]]),
+             paste0(BLM_LABELS[BLM_TAGS], " — final layer"))
+  )
+)
 
 message("  Exp3 poly joint (Whisper)...")
-bind_rows(
-  compute_surface_data(wh_brms_poly_joint_first[["encoder"]],
-                       whisper_first_predic %>% filter(component == "encoder"), "Encoder \u2014 first layer"),
-  compute_surface_data(wh_brms_poly_joint_final[["encoder"]],
-                       whisper_final_predic %>% filter(component == "encoder"), "Encoder \u2014 final layer"),
-  compute_surface_data(wh_brms_poly_joint_first[["decoder"]],
-                       whisper_first_predic %>% filter(component == "decoder"), "Decoder \u2014 first layer"),
-  compute_surface_data(wh_brms_poly_joint_final[["decoder"]],
-                       whisper_final_predic %>% filter(component == "decoder"), "Decoder \u2014 final layer")
-) %>% write_csv(file.path(RESULTS_DIR, "surface_exp3_poly_wh.csv"))
+patch_surface_ci(
+  file.path(RESULTS_DIR, "surface_exp3_poly_wh.csv"),
+  c(
+    setNames(lapply(WH_COMPONENTS, function(comp) wh_brms_poly_joint_first[[comp]]),
+             paste0(WH_LABELS[WH_COMPONENTS], " — first layer")),
+    setNames(lapply(WH_COMPONENTS, function(comp) wh_brms_poly_joint_final[[comp]]),
+             paste0(WH_LABELS[WH_COMPONENTS], " — final layer"))
+  )
+)
 
 message("Done! All results saved to ", RESULTS_DIR, "/")
