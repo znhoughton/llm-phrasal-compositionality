@@ -95,16 +95,16 @@ audio-based language models}
 \maketitle
 
 \begin{abstract}
-A central question in linguistics is how humans trade off between
-computation and storage. While recent work has examined abstract
-knowledge in language models, holistic storage of multi-word units has
-received far less attention. We probe internal representations in
-text-based LLMs and an ASR model, testing whether V+\emph{up} phrasal
-verbs develop distinct representations as a function of frequency and
-predictability. Both model types exhibit holistic storage effects, with
-predictability effects strengthening with scale. In the ASR model, the
-acoustic encoder and linguistic decoder dissociate in ways consistent
-with each component's functional role. These results support usage-based
+Humans both compute novel forms using abstract representations and store
+frequently encountered items as holistic units, but the factors
+governing this tradeoff remain poorly understood. While recent work has
+examined abstract knowledge in language models, holistic storage of
+multi-word units has received far less attention. In the present study,
+we probe internal representations in text-based LLMs and an ASR model,
+testing whether V+\emph{up} phrasal verbs develop distinct
+representations as a function of frequency and predictability. Both
+model types exhibit holistic storage effects, with predictability
+effects strengthening with scale. These results support usage-based
 accounts and suggest that error-driven learning produces human-like
 storage patterns across modalities.
 \end{abstract}
@@ -127,20 +127,24 @@ holistically remains poorly understood.
 \subsection{Computation vs Storage in
 Humans}\label{computation-vs-storage-in-humans}
 
-Evidence for computation is extensive: children apply productive
-morphological rules to novel words
-\citep{berkoChildsLearningEnglish1958}, syntactic and semantic priming
-demonstrate abstract shared representations
-\citep{bock1986syntacticpersistencelanguage, meyer1971facilitationrecognizingpairs},
-and humans order novel binomials by abstract preferences such as
-shorter-word-first \citep{morgan2016abstractknowledgedirect}.
+There is an abundance of evidence for abstract knowledge in language use
+by humans. Children generalize morphological rules productively to novel
+words they have never encountered
+\citep{berkoChildsLearningEnglish1958}, and priming studies show that
+sentences sharing syntactic structure or semantically related words
+facilitate each other's processing, implying that something abstract is
+shared across their representations
+\citep{bock1986syntacticpersistencelanguage, meyer1971facilitationrecognizingpairs}.
+Similarly, when ordering novel or low-frequency binomials, humans rely
+on general abstract preferences rather than item-specific knowledge
+\citep{morgan2016abstractknowledgedirect}.
 
 Storage has had a more controversial history. Early accounts held that
 only irregular forms were stored holistically and that any
 compositionally derivable form was derived via computation
 \citep{pinkerFutureTense2002}. Evidence against this strong view has
 since accumulated
-\citep{kapatsinski2010frequencyuseleads, bybeeEffectUsageDegrees1999, morgan2016abstractknowledgedirect, houghton2025multiwordrepresentationsminds, stembergerAreInflectedForms2004, stembergerFrequencyLexicalStorage1986}.
+\citep{kapatsinski2010frequencyuseleads, bybeeEffectUsageDegrees1999, morgan2016abstractknowledgedirect, houghton2025multiwordrepresentationsminds, stembergerAreInflectedForms2004}.
 \citet{stembergerAreInflectedForms2004} showed that inflection errors
 are less common for high-frequency words, suggesting frequency-sensitive
 storage even for regularly derived forms.
@@ -158,10 +162,11 @@ frequency-dependent shift from computation to storage. Most directly
 relevant to the present study, \citet{kapatsinski2010frequencyuseleads}
 found that listeners are slower to detect \emph{up} in high-frequency
 V+\emph{up} phrases than in lower-frequency ones, and
-\citet{houghton2025multiwordrepresentationsminds} extended this result
-to predictability. These findings suggest that high-frequency and
-high-predictability V+\emph{up} phrases are represented holistically,
-with \emph{up} no longer as accessible as a distinct unit.
+\citet{houghton2025multiwordrepresentationsminds} and found that this
+replicates for phrases varying in predictability as well. These findings
+suggest that high-frequency and high-predictability V+\emph{up} phrases
+are represented holistically, with \emph{up} no longer as accessible as
+a distinct unit.
 
 \subsection{Computation vs Storage in Language
 Models}\label{computation-vs-storage-in-language-models}
@@ -576,11 +581,12 @@ Frequency shows a strong, consistent effect such that high-frequency
 V+\emph{up} phrases diverge from representations of \emph{up}, even as a
 subword unit. The emergence of predictability effects with increasing
 parameter count suggests that sensitivity to predictability may require
-more parameters than sensitivity to frequency, perhaps because frequency
-effects are more salient to models. Further, the variable effects of
-predictability found in Experiment 2 may reflect a higher degree of
-difficulty in learning predictability effects compared to frequency
-effects.
+more representational capacity than sensitivity to frequency. This is
+perhaps unsurprising: frequency is directly recoverable from surface
+co-occurrence counts, while predictability requires tracking the
+conditional distribution of the particle given the verb --- a more
+relational statistic that may only become reliably encoded at larger
+scale.
 
 \section{Experiment 3: Whisper (ASR
 Model)}\label{experiment-3-whisper-asr-model}
@@ -735,9 +741,8 @@ Whisper's encoder and decoder. The encoder's primary role is acoustic
 processing, converting the raw audio signal into representations
 suitable for recognition. Crucially, frequency and predictability are
 not equivalent dimensions: a phrase can be highly predictable yet low in
-frequency (\emph{clammed up}, for instance, has a predictability of 0.83
-in our corpus: \emph{up} is essentially the only possible completion,
-yet occurs over 2,600 times less frequently than \emph{set up}).
+frequency (\emph{clammed up}, for instance, has a high predictability
+value, yet occurs over 2,600 times less frequently than \emph{set up}).
 High-frequency V+\emph{up} phrases appear many times in the acoustic
 signal; even though frequent phrases tend to undergo phonetic reduction,
 repeated acoustic exposure gives the encoder extensive experience with
@@ -747,10 +752,7 @@ high-frequency, so the encoder receives fewer total acoustic exposures
 to them, and their reduced forms of \emph{up} may be less reliably
 associated with the standalone \emph{up} representation. Holistic
 storage effects, by contrast, are most apparent in the decoder, where
-linguistic rather than acoustic representations are primary: by the
-decoder's final layer, both frequency and predictability drive
-representations strongly away from standalone \emph{up}, consistent with
-fully holistic storage at the linguistic level.
+linguistic rather than acoustic representations are primary.
 
 \section{Discussion and Conclusion}\label{discussion-and-conclusion}
 
@@ -768,7 +770,10 @@ representations: repeated encounters with the reduced but recognizable
 near the standalone form. Holistic storage effects are instead most
 pronounced in the decoder, where linguistic rather than acoustic
 representations are primary, and both frequency and predictability drive
-representations strongly away from standalone \emph{up}.
+representations strongly away from standalone \emph{up}. This suggests
+that holistic storage is localized to the linguistic decoder in audio
+models, and that modality shapes not just whether holistic storage
+emerges, but at which processing stage it does so.
 
 The by-layer results suggest that holistic storage is better understood
 as a spectrum than a binary distinction. Representations that diverge
@@ -789,7 +794,9 @@ Transformer models offer a potential computational instantiation of this
 view: they encode no explicit rules, yet develop frequency- and
 predictability-graded holistic representations purely from
 distributional exposure, suggesting that exemplar-based generalization
-is sufficient to produce the patterns observed in human behavior.
+is sufficient to produce the patterns observed in human behavior. If so,
+the same underlying mechanism may give rise to both holistic storage and
+grammatical abstraction in human language users.
 
 Overall, the present study demonstrates another dimension upon which
 LLMs and even ASR models' behavior resembles that of humans, providing
