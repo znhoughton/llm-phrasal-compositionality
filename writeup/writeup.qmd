@@ -9,17 +9,23 @@ editor: visual
 author:
   - name:
       literal: Zachary Houghton
-    email: znhoughton@ucdavis.edu
+    email: znh@uoregon.edu
     affiliations:
-      - name: University of California, Davis
+      - name: University of Oregon
+      - name: Vail Systems, Inc
   - name:
-      literal: Kenji Sagae
+      literal: Yu Zhou
     affiliations:
-      - name: University of California, Davis
+      - name: Vail Systems, Inc
   - name:
-      literal: Emily Morgan
+      literal: Dan Pluth
     affiliations:
-      - name: University of California, Davis
+      - name: Vail Systems, Inc
+  - name:
+      literal: Vijay Gurbani
+    affiliations:
+      - name: Vail Systems, Inc
+
 abstract: |
   Humans both compute novel forms using abstract representations and store frequently encountered items as holistic units, but the factors governing this tradeoff remain poorly understood. While recent work has examined abstract knowledge in language models, holistic storage of multi-word units has received far less attention. In the present study, we probe internal representations in text-based LLMs and an ASR model, testing whether V+*up* phrasal verbs develop distinct representations as a function of frequency and predictability. Both model types exhibit holistic storage effects, with predictability effects strengthening with scale. These results support usage-based accounts and suggest that error-driven learning produces human-like storage patterns across modalities.
   

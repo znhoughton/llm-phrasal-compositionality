@@ -89,7 +89,7 @@ $if(by-author)$
 $for(by-author)$
   $by-author.name.literal$ \\
   $if(by-author.affiliations)$
-    $for(by-author.affiliations)$$by-author.affiliations.name$$sep$, $endfor$ \\
+    $for(by-author.affiliations)$$by-author.affiliations.name$$sep$ \\ $endfor$ \\
   $endif$
   $if(by-author.email)$
     \texttt{$by-author.email$}
