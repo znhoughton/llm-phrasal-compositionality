@@ -144,13 +144,26 @@ def classify_ups_from_doc(doc):
     (token_index, label, verb_up_type) for each "up" token.
       label        : "vup" or "word_up"
       verb_up_type : "pick up" etc., or "" for word_up
+
+    A token is classified as "vup" if the immediately preceding token is a
+    VERB (original check) OR if spaCy's dependency parser labels it as a
+    particle (dep_ == 'prt'), which catches cases like "picked it up" where
+    the particle does not immediately follow the verb.
     """
     results = []
     for tok in doc:
         if tok.text.lower() != "up":
             continue
-        if tok.i > 0 and doc[tok.i - 1].pos_ == "VERB":
-            verb_up = f"{doc[tok.i - 1].text.lower()} up"
+        prev_is_verb = tok.i > 0 and doc[tok.i - 1].pos_ == "VERB"
+        is_particle  = tok.dep_ == "prt"
+        if prev_is_verb or is_particle:
+            if prev_is_verb:
+                verb = doc[tok.i - 1].text.lower()
+            elif tok.head.pos_ == "VERB":
+                verb = tok.head.text.lower()
+            else:
+                verb = ""
+            verb_up = f"{verb} up" if verb else "up"
             results.append((tok.i, "vup", verb_up))
         else:
             results.append((tok.i, "word_up", ""))
@@ -308,8 +321,7 @@ def main():
     log.info("Phase 1: pre-filtering and batch spaCy classification ...")
 
     log.info("Loading spaCy model ...")
-    nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
-    nlp.add_pipe("sentencizer")
+    nlp = spacy.load("en_core_web_sm", disable=["ner"])
 
     # Build candidate list with cheap filters only — no disk I/O yet
     candidates      = []

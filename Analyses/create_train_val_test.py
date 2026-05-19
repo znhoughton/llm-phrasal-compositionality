@@ -56,9 +56,11 @@ import os
 import pickle
 import logging
 import random
+import sys
 
 import numpy as np
 import pandas as pd
+import spacy
 from transformers import AutoTokenizer
 
 # ---------------------------------------------------------------------------
@@ -136,6 +138,31 @@ os.makedirs(DATA_DIR_UP,        exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
+# PARTICLE FILTER
+# ---------------------------------------------------------------------------
+
+def filter_particle_up_sentences(sentences):
+    """Return only sentences where the last 'up' token is a preposition (dep_ == 'prep').
+
+    Positive filter: keeps only unambiguous prepositional uses (e.g. 'up the
+    stairs'), excluding particles (dep_ == 'prt'), adverbs, and ambiguous cases.
+    """
+    log.info("Loading spaCy dependency parser for particle filter ...")
+    nlp = spacy.load("en_core_web_sm")
+    keep = []
+    docs = nlp.pipe((s[:500] for s in sentences), batch_size=256)
+    for sent, doc in zip(sentences, docs):
+        last_up = None
+        for token in doc:
+            if token.text.lower() == "up":
+                last_up = token
+        if last_up is not None and last_up.dep_ == "prep":
+            keep.append(sent)
+    log.info("Particle filter: kept %d / %d sentences", len(keep), len(sentences))
+    return keep
+
+
+# ---------------------------------------------------------------------------
 # LOAD CORPUS
 # ---------------------------------------------------------------------------
 
@@ -152,10 +179,15 @@ def load_corpus():
         "V+up types: %d | standalone 'up' sentences: %d | up-word types: %d",
         len(vup_sentences), len(up_sentences), len(upword_sentences),
     )
-    assert len(up_sentences) >= N_TRAIN + N_VAL, (
-        f"Need at least {N_TRAIN + N_VAL} standalone 'up' sentences, "
-        f"got {len(up_sentences)}."
-    )
+    up_sentences = filter_particle_up_sentences(up_sentences)
+    if len(up_sentences) < N_TRAIN + N_VAL:
+        log.error(
+            "Not enough prepositional 'up' sentences after filtering: "
+            "need %d (N_TRAIN=%d + N_VAL=%d), got %d. "
+            "Consider lowering N_TRAIN/N_VAL or relaxing the filter.",
+            N_TRAIN + N_VAL, N_TRAIN, N_VAL, len(up_sentences),
+        )
+        sys.exit(1)
 
     # One sentence per unique up-within-word type (e.g. at most one "setup").
     # Sentence is chosen deterministically; pairs are shuffled with a fixed seed.
