@@ -49,7 +49,7 @@ MAX_SENTENCES_PER_VUP    = 50
 MAX_SENTENCES_PER_UPWORD = 50
 MIN_FREQ_VUP             = 10
 MIN_FREQ_UPWORD          = 10
-N_STANDALONE_UP          = 2000   # 1000 train + 1000 val
+N_STANDALONE_UP          = 30000  # large pool so preposition filter in create_train_val_test.py leaves >= 2000
 
 # Words to EXCLUDE from "up within words" — these are the standalone particle
 # "up" or common false positives we don't want

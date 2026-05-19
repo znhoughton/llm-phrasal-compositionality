@@ -165,8 +165,9 @@ def classify_ups_from_doc(doc):
                 verb = ""
             verb_up = f"{verb} up" if verb else "up"
             results.append((tok.i, "vup", verb_up))
-        else:
+        elif tok.dep_ == "prep":
             results.append((tok.i, "word_up", ""))
+        # else: adverbs, quantmod, etc. — excluded from training
     return results
 
 

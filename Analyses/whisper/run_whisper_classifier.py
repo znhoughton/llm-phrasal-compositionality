@@ -35,6 +35,7 @@ import logging
 import os
 import pickle
 import random
+import sys
 
 import numpy as np
 import pandas as pd
@@ -141,9 +142,14 @@ def build_splits(df):
     # Train/val from word_up positives — mirrors OLMo/BabyLM: take first N_TRAIN
     # rows as train, next N_VAL rows as val (after shuffling with fixed seed).
     standalone = standalone.sample(frac=1, random_state=RANDOM_SEED).reset_index(drop=True)
-    assert len(standalone) >= N_TRAIN + N_VAL, (
-        f"Need at least {N_TRAIN + N_VAL} word_up rows, got {len(standalone)}."
-    )
+    if len(standalone) < N_TRAIN + N_VAL:
+        log.error(
+            "Not enough prepositional 'up' rows after filtering: "
+            "need %d (N_TRAIN=%d + N_VAL=%d), got %d. "
+            "Check that build_audio_dataset.py found sufficient prep uses in the audio metadata.",
+            N_TRAIN + N_VAL, N_TRAIN, N_VAL, len(standalone),
+        )
+        sys.exit(1)
 
     train_pos = standalone.iloc[:N_TRAIN].copy()
     val_pos   = standalone.iloc[N_TRAIN : N_TRAIN + N_VAL].copy()
