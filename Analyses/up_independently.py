@@ -41,7 +41,7 @@ from tqdm import tqdm
 # ---------------------------------------------------------------------------
 # CONFIG (defaults; all overridable via CLI — see --help)
 # ---------------------------------------------------------------------------
-BATCH_SIZE      = 50
+BATCH_SIZE      = 64    # increased from 50; safe with multiple BabyLM models on 80 GB GPU
 RANDOM_SEED     = 964
 MAX_SEQ_LEN     = 128
 LOAD_IN_8BIT    = False
@@ -187,20 +187,24 @@ def load_datasets():
 
 
 # ---------------------------------------------------------------------------
-# EMBEDDING EXTRACTION
+# EMBEDDING EXTRACTION — single forward pass, all layers simultaneously
 # ---------------------------------------------------------------------------
 
-def extract_embeddings_from_positions(records, model, tokenizer, layer_idx, desc="Extracting"):
+def extract_all_layers_records(records, model, tokenizer, n_layers, desc=""):
     """
-    Extract hidden-state vectors at pre-computed token positions.
-    records: list of (sentence, token_position, label)
-    Returns (X, y) numpy arrays.
+    One forward pass through records, collecting the target-token hidden state
+    for every layer at once.
+
+    Returns dict {layer_idx: (X, y)} where X is np.ndarray (n, hidden_size)
+    and y is np.ndarray (n,).
     """
     sentences = [s for s, _, _ in records]
     positions = [p for _, p, _ in records]
     labels    = [l for _, _, l in records]
 
-    X, y_out, skipped = [], [], 0
+    layer_X = [[] for _ in range(n_layers)]
+    layer_y = [[] for _ in range(n_layers)]
+
     device = next(model.parameters()).device
 
     with tqdm(total=len(sentences), desc=desc, unit="sent", leave=False) as pbar:
@@ -223,30 +227,28 @@ def extract_embeddings_from_positions(records, model, tokenizer, layer_idx, desc
                     output_hidden_states=True,
                 )
 
-            hidden = outputs.hidden_states[layer_idx + 1]
+            actual_lens = attention_mask.sum(dim=1).tolist()
 
-            for i, (pos, lbl) in enumerate(zip(batch_pos, batch_label)):
-                actual_len = attention_mask[i].sum().item()
-                if pos >= actual_len:
-                    skipped += 1
-                    continue
-                X.append(hidden[i, pos, :].float().cpu().numpy())
-                y_out.append(lbl)
+            for layer_idx in range(n_layers):
+                hidden = outputs.hidden_states[layer_idx + 1]
+                for i, (pos, lbl, alen) in enumerate(zip(batch_pos, batch_label, actual_lens)):
+                    if pos < alen:
+                        layer_X[layer_idx].append(hidden[i, pos, :].float().cpu().numpy())
+                        layer_y[layer_idx].append(lbl)
 
+            del outputs, input_ids, attention_mask
             pbar.update(len(batch_sents))
-            pbar.set_postfix({"ok": len(X), "skip": skipped})
 
-    if skipped:
-        log.warning("  Layer %d: %d examples skipped (position beyond truncation)",
-                    layer_idx, skipped)
-
-    return np.vstack(X), np.array(y_out)
+    return {li: (np.vstack(layer_X[li]), np.array(layer_y[li])) for li in range(n_layers)}
 
 
-def extract_vup_embeddings_from_positions(vup_positions, model, tokenizer, layer_idx):
+def extract_all_layers_vup(vup_positions, model, tokenizer, n_layers):
     """
-    Extract 'up' token embeddings for all V+up types using pre-computed positions.
-    Returns dict: {vup_type: np.ndarray of shape (n_sentences, hidden_size)}
+    One forward pass through all V+up test sentences, collecting the 'up'
+    token hidden state for every layer at once.
+
+    Returns dict {layer_idx: {vup_type: np.ndarray (n_sentences, hidden_size)}}.
+    Memory is freed per-layer during reorganisation so peak usage is bounded.
     """
     all_sents, all_pos, type_index = [], [], []
     for vup_type, records in vup_positions.items():
@@ -255,16 +257,21 @@ def extract_vup_embeddings_from_positions(vup_positions, model, tokenizer, layer
             all_pos.append(pos)
             type_index.append(vup_type)
 
-    log.info("  Extracting V+up embeddings at layer %d: %d sentences, %d types ...",
-             layer_idx, len(all_sents), len(vup_positions))
+    n_total = len(all_sents)
+    log.info("  Extracting V+up embeddings (all layers): %d sentences, %d types ...",
+             n_total, len(vup_positions))
 
-    all_embeddings, skipped = [], 0
+    # Build per-layer, per-type lists directly during the forward pass
+    layer_vup_embs = [{vt: [] for vt in vup_positions} for _ in range(n_layers)]
+    skipped = 0
+
     device = next(model.parameters()).device
 
-    with tqdm(total=len(all_sents), desc=f"Layer {layer_idx}: V+up", unit="sent", leave=False) as pbar:
-        for batch_start in range(0, len(all_sents), BATCH_SIZE):
+    with tqdm(total=n_total, desc="Test (all layers)", unit="sent", leave=False) as pbar:
+        for batch_start in range(0, n_total, BATCH_SIZE):
             batch_sents = all_sents[batch_start : batch_start + BATCH_SIZE]
             batch_pos   = all_pos[batch_start  : batch_start + BATCH_SIZE]
+            batch_types = type_index[batch_start : batch_start + BATCH_SIZE]
 
             encoded = tokenizer(
                 batch_sents, return_tensors="pt", padding=True,
@@ -280,28 +287,33 @@ def extract_vup_embeddings_from_positions(vup_positions, model, tokenizer, layer
                     output_hidden_states=True,
                 )
 
-            hidden = outputs.hidden_states[layer_idx + 1]
+            actual_lens = attention_mask.sum(dim=1).tolist()
 
-            for i, pos in enumerate(batch_pos):
-                actual_len = attention_mask[i].sum().item()
-                if pos >= actual_len:
-                    skipped += 1
-                    all_embeddings.append(None)
-                    continue
-                all_embeddings.append(hidden[i, pos, :].float().cpu().numpy())
+            for layer_idx in range(n_layers):
+                hidden = outputs.hidden_states[layer_idx + 1]
+                for i, (pos, alen, vt) in enumerate(zip(batch_pos, actual_lens, batch_types)):
+                    if pos < alen:
+                        layer_vup_embs[layer_idx][vt].append(
+                            hidden[i, pos, :].float().cpu().numpy()
+                        )
+                    elif layer_idx == 0:
+                        skipped += 1
 
+            del outputs, input_ids, attention_mask
             pbar.update(len(batch_sents))
-            pbar.set_postfix({"skip": skipped})
 
-    vup_embeddings = {vup_type: [] for vup_type in vup_positions}
-    for emb, vup_type in zip(all_embeddings, type_index):
-        if emb is not None:
-            vup_embeddings[vup_type].append(emb)
+    if skipped:
+        log.warning("  %d test sentences skipped (position beyond truncation)", skipped)
 
-    vup_embeddings = {k: np.vstack(v) for k, v in vup_embeddings.items() if v}
-    log.info("  Layer %d V+up done: %d types | %d skipped",
-             layer_idx, len(vup_embeddings), skipped)
-    return vup_embeddings
+    result = {}
+    for layer_idx in range(n_layers):
+        result[layer_idx] = {
+            k: np.vstack(v) for k, v in layer_vup_embs[layer_idx].items() if v
+        }
+        layer_vup_embs[layer_idx] = None  # free raw lists immediately
+        log.info("  Layer %d V+up done: %d types", layer_idx, len(result[layer_idx]))
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +502,17 @@ def main():
     with open(VUP_PKL_PATH, "rb") as f:
         _, vup_freq, _, _ = pickle.load(f)
 
+    log.info("Extracting train embeddings (single pass, all layers) ...")
+    train_all = extract_all_layers_records(
+        train_records, model, tokenizer, n_layers, desc="Train"
+    )
+    log.info("Extracting val embeddings (single pass, all layers) ...")
+    val_all = extract_all_layers_records(
+        val_records, model, tokenizer, n_layers, desc="Val"
+    )
+    log.info("Extracting test (V+up) embeddings (single pass, all layers) ...")
+    vup_all = extract_all_layers_vup(vup_positions, model, tokenizer, n_layers)
+
     all_layer_dfs  = []
     layer_metadata = []
 
@@ -498,14 +521,9 @@ def main():
         log.info("LAYER %d / %d", layer_idx, n_layers - 1)
         log.info("=" * 60)
 
-        X_train, y_train = extract_embeddings_from_positions(
-            train_records, model, tokenizer, layer_idx,
-            desc=f"Layer {layer_idx}: train",
-        )
-        X_val, y_val = extract_embeddings_from_positions(
-            val_records, model, tokenizer, layer_idx,
-            desc=f"Layer {layer_idx}: val",
-        )
+        X_train, y_train = train_all[layer_idx]
+        X_val,   y_val   = val_all[layer_idx]
+        vup_embeddings   = vup_all[layer_idx]
 
         clf, scaler, metrics = train_classifier(X_train, y_train, X_val, y_val)
 
@@ -524,10 +542,6 @@ def main():
             "val_other_acc":    round(metrics["other_acc"], 6),
         })
 
-        vup_embeddings = extract_vup_embeddings_from_positions(
-            vup_positions, model, tokenizer, layer_idx
-        )
-
         layer_df = evaluate_vup(clf, scaler, vup_positions, vup_embeddings, vup_freq, vup_predic, layer_idx)
 
         csv_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}.csv")
@@ -539,6 +553,7 @@ def main():
 
         all_layer_dfs.append(layer_df)
 
+        del train_all[layer_idx], val_all[layer_idx], vup_all[layer_idx]
         del X_train, y_train, X_val, y_val, vup_embeddings
         torch.cuda.empty_cache()
 
