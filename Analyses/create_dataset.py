@@ -26,6 +26,7 @@ Requires:
     python -m spacy download en_core_web_sm
 """
 
+import argparse
 import os
 import re
 import glob
@@ -34,6 +35,7 @@ import logging
 import collections
 import multiprocessing as mp
 
+import spacy
 import pyarrow as pa
 import pyarrow.ipc as ipc
 from tqdm import tqdm
@@ -49,7 +51,7 @@ MAX_SENTENCES_PER_VUP    = 50
 MAX_SENTENCES_PER_UPWORD = 50
 MIN_FREQ_VUP             = 10
 MIN_FREQ_UPWORD          = 10
-N_STANDALONE_UP          = 30000  # large pool so preposition filter in create_train_val_test.py leaves >= 2000
+N_STANDALONE_UP          = 10000  # large pool so preposition filter in create_train_val_test.py leaves >= 2000
 
 # Words to EXCLUDE from "up within words" — these are the standalone particle
 # "up" or common false positives we don't want
@@ -252,14 +254,100 @@ def collect_all(data_dir, n_workers=None):
 
 
 # ---------------------------------------------------------------------------
+# STREAMING: collect only up_sentences from HuggingFace C4
+# ---------------------------------------------------------------------------
+
+def collect_up_sentences_streaming(n_needed):
+    """Stream C4 from HuggingFace to collect standalone 'up' sentences only.
+
+    Preserves existing vup_sentences and upword data so the test set is
+    unchanged. Only up_sentences (the train/val positive pool) is refreshed.
+    """
+    from datasets import load_dataset
+
+    nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
+    nlp.add_pipe("sentencizer")
+
+    up_sentences = []
+    up_freq      = 0
+
+    log.info("Streaming C4 from HuggingFace (target: %d standalone 'up' sentences) ...", n_needed)
+    dataset = load_dataset("allenai/c4", "en", streaming=True, split="train", trust_remote_code=True)
+
+    with tqdm(total=n_needed, desc="Standalone 'up' collected", unit="sent") as pbar:
+        for example in dataset:
+            text = example.get("text", "")
+            if not text:
+                continue
+
+            text_lower = text.lower()
+            if " up " not in text_lower and not text_lower.startswith("up ") and not text_lower.endswith(" up"):
+                continue
+
+            doc = nlp(text[:4000])
+
+            for sent in doc.sents:
+                sent_text  = sent.text.strip()
+                sent_lower = sent_text.lower()
+                if len(sent_text) < 10 or " up" not in sent_lower:
+                    continue
+
+                for tok in sent:
+                    if tok.text.lower() != "up":
+                        continue
+                    if not is_verb_up_context(sent.as_doc(), tok.i - sent.start):
+                        up_freq += 1
+                        if len(up_sentences) < n_needed:
+                            up_sentences.append(sent_text)
+                            pbar.update(1)
+
+            if len(up_sentences) >= n_needed:
+                break
+
+    log.info("Streaming done: %d sentences collected (up_freq=%d)", len(up_sentences), up_freq)
+    return up_sentences, up_freq
+
+
+# ---------------------------------------------------------------------------
+# ARGS
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Create corpus datasets from C4.")
+    parser.add_argument(
+        "--streaming", action="store_true",
+        help=(
+            "Stream C4 from HuggingFace instead of reading local arrow files. "
+            "Only refreshes up_sentences; preserves existing vup/upword data "
+            "so the test set is unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--n-standalone-up", type=int, default=N_STANDALONE_UP,
+        help=f"Number of standalone 'up' sentences to collect. Default: {N_STANDALONE_UP}",
+    )
+    return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 
 def main():
-    (
-        vup_sentences, vup_freq, up_sentences, up_freq,
-        upword_sentences, upword_freq,
-    ) = collect_all(DATA_DIR)
+    args = parse_args()
+
+    if args.streaming:
+        log.info("Streaming mode: only refreshing up_sentences; test set preserved.")
+        with open(OUT_VUP_PKL, "rb") as f:
+            vup_sentences, vup_freq, _, _ = pickle.load(f)
+        with open(OUT_UPWORD_PKL, "rb") as f:
+            upword_sentences, upword_freq, _, _ = pickle.load(f)
+        up_sentences, up_freq = collect_up_sentences_streaming(args.n_standalone_up)
+    else:
+        (
+            vup_sentences, vup_freq, up_sentences, up_freq,
+            upword_sentences, upword_freq,
+        ) = collect_all(DATA_DIR)
 
     # Save Dataset 1
     with open(OUT_VUP_PKL, "wb") as f:
