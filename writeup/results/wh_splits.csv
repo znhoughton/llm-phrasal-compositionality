@@ -1,3 +1,0 @@
-Component,Train pos,Train neg,Val pos,Val neg,Test sentences,Test types,Items w/ predic.
-Encoder,1000,1000,1000,1000,20549,1426,1426
-Decoder,1000,1000,1000,1000,20549,1426,1426
