@@ -291,7 +291,7 @@ The classifiers targeting OLMo-3 7B and the BabyLM models were trained on the **
 
 Classifier training and validation split sizes are shown in the Appendix (@tbl-exp1-splits). The test set comprised verb+*up* phrases (e.g., *pick up*, *set up*) with at least 20 occurrences in the corpus; up to 20 sentences were sampled per type. Corpus frequency and predictability (log odds; see @eq-logit-predic) were derived from the corpus described above for each model (Dolma v1.7 for OLMo-3 7B; the BabyLM training corpus for BabyLM models). Because the BabyLM corpus is smaller than Dolma, fewer V+*up* types attain a valid (non-zero) predictability estimate under BabyLM statistics; only types with a valid predictability estimate are included in the analyses. Full item-level statistics are reported in @tbl-test-items (Appendix).
 
-For OLMo-3 7B, 3,927 unique V+*up* types were included, with a median corpus frequency of 92 and a median log-predictability of $-5.38$. The BabyLM models shared 1,039 items; these items had a higher median frequency (920) and higher median log-predictability ($-3.40$), reflecting the smaller and more concentrated vocabulary of the BabyLM training data.
+For OLMo-3 7B, 4,081 unique V+*up* types were included, with a median Dolma corpus frequency of 43,608 and a median log-predictability of $-5.39$. The BabyLM models shared 1,039 items with a valid predictability estimate; these items had a median BabyLM corpus frequency of 34 and a median log-predictability of $-3.40$. The lower raw frequency for BabyLM items reflects the much smaller scale of the BabyLM training corpus (150M words) relative to Dolma v1.7; the higher log-predictability reflects the more concentrated vocabulary of the BabyLM training data.
 
 ### Analyses
 
@@ -401,7 +401,7 @@ The Whisper experiment used spoken language data drawn from a mixed-source audio
 
 The **training and validation sets** used 1,000 standalone *up* instances each as positive examples, paired with 1,000 randomly selected non-*up* words from the same segment as negative examples. This mirrors the standalone-*up* training design of Experiment 1. Negative words were restricted to those whose string consists entirely of alphabetic characters (matching the `token.isalpha()` criterion used in Experiments 1 and 2), with a minimum duration of 20 ms. Training and validation segments were non-overlapping.
 
-The **test set** comprised V+*up* types with at least 5 occurrences in the audio dataset (lower than Experiments 1 and 2, reflecting sparser audio coverage), with up to 20 instances per type. Corpus frequency and predictability were drawn from Dolma v1.7 (via infini-gram), identical to OLMo-3 7B. After filtering to types with a valid predictability estimate, 1,397 unique V+*up* types were retained (median corpus frequency: 683; median log-predictability: $-4.05$). Split sizes and item-level statistics are in @tbl-exp3-splits and @tbl-test-items (Appendix).
+The **test set** comprised V+*up* types with at least 5 occurrences in the audio dataset (lower than Experiments 1 and 2, reflecting sparser audio coverage), with up to 20 instances per type. Corpus frequency and predictability were drawn from Dolma v1.7 (via infini-gram), identical to OLMo-3 7B. After filtering to types with a valid predictability estimate, 1,426 unique V+*up* types were retained (median Dolma corpus frequency: 243,412; median log-predictability: $-4.08$). Split sizes and item-level statistics are in @tbl-exp3-splits and @tbl-test-items (Appendix).
 
 ### Analyses
 
@@ -561,9 +561,9 @@ bind_rows(
 tibble::tribble(
   ~Model,         ~`Train pos`, ~`Train neg`, ~`Val pos`, ~`Val neg`,
   "OLMo-3 7B",   1000L,        1000L,        992L,       1000L,
-  "BabyLM 125M", 1000L,        1000L,        999L,       1000L,
-  "BabyLM 350M", 1000L,        1000L,        999L,       1000L,
-  "BabyLM 1.3B", 1000L,        1000L,        916L,       1000L
+  "BabyLM 125M", 1000L,        1000L,        916L,        995L,
+  "BabyLM 350M", 1000L,        1000L,        916L,        995L,
+  "BabyLM 1.3B", 1000L,        1000L,        916L,        995L
 ) %>% knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, format.args = list(big.mark = ","))
 ```
 
@@ -607,9 +607,9 @@ plot_layer_diffs(ddata_freq_indep, ddata_predic_indep)
 tibble::tribble(
   ~Model,         ~`Train standalone`, ~`Train subword`, ~`Train neg`, ~`Val rows`,
   "OLMo-3 7B",   1000L,               1000L,            2000L,        3868L,
-  "BabyLM 125M", 1000L,               1000L,            2000L,        3582L,
-  "BabyLM 350M", 1000L,               1000L,            2000L,        3582L,
-  "BabyLM 1.3B", 1000L,               1000L,            2000L,        3773L
+  "BabyLM 125M", 1000L,               1000L,            2000L,        3343L,
+  "BabyLM 350M", 1000L,               1000L,            2000L,        3343L,
+  "BabyLM 1.3B", 1000L,               1000L,            2000L,        3343L
 ) %>% knitr::kable(row.names = FALSE, format = "latex", booktabs = TRUE, format.args = list(big.mark = ","))
 ```
 

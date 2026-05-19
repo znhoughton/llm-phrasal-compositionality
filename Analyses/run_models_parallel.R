@@ -181,6 +181,34 @@ wh_data <- setNames(lapply(WH_COMPONENTS, function(comp) list(
   first_ftp = whisper_first_ftp %>% filter(component == comp)
 )), WH_COMPONENTS)
 
+# ---- Build data lookup (exported once per worker, not once per task) --------
+DATA_LOOKUP <- c(
+  list(
+    olmo_indep_final     = olmo_indep_final,
+    olmo_indep_first     = olmo_indep_first,
+    olmo_sub_final       = olmo_sub_final,
+    olmo_sub_first       = olmo_sub_first,
+    olmo_indep_final_ftp = olmo_indep_final_ftp,
+    olmo_sub_final_ftp   = olmo_sub_final_ftp,
+    olmo_indep_first_ftp = olmo_indep_first_ftp,
+    olmo_sub_first_ftp   = olmo_sub_first_ftp
+  ),
+  unlist(lapply(BLM_TAGS, function(tag) {
+    sl <- blm_slug(tag)
+    d  <- blm_data[[tag]]
+    setNames(list(
+      d$indep_final, d$indep_first, d$sub_final,    d$sub_first,
+      d$indep_final_ftp, d$sub_final_ftp, d$indep_first_ftp, d$sub_first_ftp
+    ), paste0("blm_", sl, c("_indep_final", "_indep_first", "_sub_final", "_sub_first",
+                             "_indep_final_ftp", "_sub_final_ftp", "_indep_first_ftp", "_sub_first_ftp")))
+  }), recursive = FALSE),
+  unlist(lapply(WH_COMPONENTS, function(comp) {
+    d <- wh_data[[comp]]
+    setNames(list(d$final, d$first, d$final_ftp, d$first_ftp),
+             paste0("wh_", comp, c("_final", "_first", "_final_ftp", "_first_ftp")))
+  }), recursive = FALSE)
+)
+
 # ---- Build model spec list --------------------------------------------------
 FREQ_FORM       <- "logit ~ log_freq + (1 | verb_up)"
 PREDIC_FORM     <- "logit ~ log_predic + (1 | verb_up)"
@@ -189,75 +217,73 @@ POLY_JOINT_FORM <- paste0("logit ~ c_log_freq + I(c_log_freq^2) + ",
                            "c_log_predic + I(c_log_predic^2) + ",
                            "c_log_freq:c_log_predic + (1 | verb_up)")
 
-mk <- function(formula, data, file) list(formula = formula, data = data, file = file)
+mk <- function(formula, data_key, file) list(formula = formula, data_key = data_key, file = file)
 
 model_specs <- c(
   # ---- OLMo (16 models) -----------------------------------------------------
   list(
     # frequency
-    mk(FREQ_FORM, olmo_indep_final,     olmo_brms_path("model_freq_up_independently")),
-    mk(FREQ_FORM, olmo_indep_first,     olmo_brms_path("model_freq_up_independently_first_layer")),
-    mk(FREQ_FORM, olmo_sub_final,       olmo_brms_path("model_freq_up_subword")),
-    mk(FREQ_FORM, olmo_sub_first,       olmo_brms_path("model_freq_up_subword_first_layer")),
+    mk(FREQ_FORM, "olmo_indep_final",     olmo_brms_path("model_freq_up_independently")),
+    mk(FREQ_FORM, "olmo_indep_first",     olmo_brms_path("model_freq_up_independently_first_layer")),
+    mk(FREQ_FORM, "olmo_sub_final",       olmo_brms_path("model_freq_up_subword")),
+    mk(FREQ_FORM, "olmo_sub_first",       olmo_brms_path("model_freq_up_subword_first_layer")),
     # predictability
-    mk(PREDIC_FORM, olmo_indep_final_ftp, olmo_brms_path("model_predic_up_independently")),
-    mk(PREDIC_FORM, olmo_sub_final_ftp,   olmo_brms_path("model_predic_up_subword")),
-    mk(PREDIC_FORM, olmo_indep_first_ftp, olmo_brms_path("model_predic_up_independently_first_layer")),
-    mk(PREDIC_FORM, olmo_sub_first_ftp,   olmo_brms_path("model_predic_up_subword_first_layer")),
+    mk(PREDIC_FORM, "olmo_indep_final_ftp", olmo_brms_path("model_predic_up_independently")),
+    mk(PREDIC_FORM, "olmo_sub_final_ftp",   olmo_brms_path("model_predic_up_subword")),
+    mk(PREDIC_FORM, "olmo_indep_first_ftp", olmo_brms_path("model_predic_up_independently_first_layer")),
+    mk(PREDIC_FORM, "olmo_sub_first_ftp",   olmo_brms_path("model_predic_up_subword_first_layer")),
     # joint (interaction)
-    mk(JOINT_FORM, olmo_indep_final_ftp,  olmo_brms_path("model_freq_predic_up_independently")),
-    mk(JOINT_FORM, olmo_sub_final_ftp,    olmo_brms_path("model_freq_predic_up_subword")),
-    mk(JOINT_FORM, olmo_indep_first_ftp,  olmo_brms_path("model_freq_predic_up_independently_first")),
-    mk(JOINT_FORM, olmo_sub_first_ftp,    olmo_brms_path("model_freq_predic_up_subword_first")),
+    mk(JOINT_FORM, "olmo_indep_final_ftp",  olmo_brms_path("model_freq_predic_up_independently")),
+    mk(JOINT_FORM, "olmo_sub_final_ftp",    olmo_brms_path("model_freq_predic_up_subword")),
+    mk(JOINT_FORM, "olmo_indep_first_ftp",  olmo_brms_path("model_freq_predic_up_independently_first")),
+    mk(JOINT_FORM, "olmo_sub_first_ftp",    olmo_brms_path("model_freq_predic_up_subword_first")),
     # polynomial joint
-    mk(POLY_JOINT_FORM, olmo_indep_final_ftp, olmo_brms_path("model_poly_joint_indep_final")),
-    mk(POLY_JOINT_FORM, olmo_sub_final_ftp,   olmo_brms_path("model_poly_joint_sub_final")),
-    mk(POLY_JOINT_FORM, olmo_indep_first_ftp, olmo_brms_path("model_poly_joint_indep_first")),
-    mk(POLY_JOINT_FORM, olmo_sub_first_ftp,   olmo_brms_path("model_poly_joint_sub_first"))
+    mk(POLY_JOINT_FORM, "olmo_indep_final_ftp", olmo_brms_path("model_poly_joint_indep_final")),
+    mk(POLY_JOINT_FORM, "olmo_sub_final_ftp",   olmo_brms_path("model_poly_joint_sub_final")),
+    mk(POLY_JOINT_FORM, "olmo_indep_first_ftp", olmo_brms_path("model_poly_joint_indep_first")),
+    mk(POLY_JOINT_FORM, "olmo_sub_first_ftp",   olmo_brms_path("model_poly_joint_sub_first"))
   ),
   # ---- BabyLM (48 models: 16 groups × 3 tags) --------------------------------
   unlist(lapply(BLM_TAGS, function(tag) {
     sl <- blm_slug(tag)
-    d  <- blm_data[[tag]]
     list(
       # frequency
-      mk(FREQ_FORM, d$indep_final,     blm_brms_path(paste0("model_freq_indep_final_", sl))),
-      mk(FREQ_FORM, d$indep_first,     blm_brms_path(paste0("model_freq_indep_first_", sl))),
-      mk(FREQ_FORM, d$sub_final,       blm_brms_path(paste0("model_freq_sub_final_",   sl))),
-      mk(FREQ_FORM, d$sub_first,       blm_brms_path(paste0("model_freq_sub_first_",   sl))),
+      mk(FREQ_FORM, paste0("blm_", sl, "_indep_final"), blm_brms_path(paste0("model_freq_indep_final_", sl))),
+      mk(FREQ_FORM, paste0("blm_", sl, "_indep_first"), blm_brms_path(paste0("model_freq_indep_first_", sl))),
+      mk(FREQ_FORM, paste0("blm_", sl, "_sub_final"),   blm_brms_path(paste0("model_freq_sub_final_",   sl))),
+      mk(FREQ_FORM, paste0("blm_", sl, "_sub_first"),   blm_brms_path(paste0("model_freq_sub_first_",   sl))),
       # predictability
-      mk(PREDIC_FORM, d$indep_final_ftp, blm_brms_path(paste0("model_predic_indep_final_", sl))),
-      mk(PREDIC_FORM, d$sub_final_ftp,   blm_brms_path(paste0("model_predic_sub_final_",   sl))),
-      mk(PREDIC_FORM, d$indep_first_ftp, blm_brms_path(paste0("model_predic_indep_first_", sl))),
-      mk(PREDIC_FORM, d$sub_first_ftp,   blm_brms_path(paste0("model_predic_sub_first_",   sl))),
+      mk(PREDIC_FORM, paste0("blm_", sl, "_indep_final_ftp"), blm_brms_path(paste0("model_predic_indep_final_", sl))),
+      mk(PREDIC_FORM, paste0("blm_", sl, "_sub_final_ftp"),   blm_brms_path(paste0("model_predic_sub_final_",   sl))),
+      mk(PREDIC_FORM, paste0("blm_", sl, "_indep_first_ftp"), blm_brms_path(paste0("model_predic_indep_first_", sl))),
+      mk(PREDIC_FORM, paste0("blm_", sl, "_sub_first_ftp"),   blm_brms_path(paste0("model_predic_sub_first_",   sl))),
       # joint
-      mk(JOINT_FORM, d$indep_final_ftp, blm_brms_path(paste0("model_joint_indep_final_", sl))),
-      mk(JOINT_FORM, d$sub_final_ftp,   blm_brms_path(paste0("model_joint_sub_final_",   sl))),
-      mk(JOINT_FORM, d$indep_first_ftp, blm_brms_path(paste0("model_joint_indep_first_", sl))),
-      mk(JOINT_FORM, d$sub_first_ftp,   blm_brms_path(paste0("model_joint_sub_first_",   sl))),
+      mk(JOINT_FORM, paste0("blm_", sl, "_indep_final_ftp"), blm_brms_path(paste0("model_joint_indep_final_", sl))),
+      mk(JOINT_FORM, paste0("blm_", sl, "_sub_final_ftp"),   blm_brms_path(paste0("model_joint_sub_final_",   sl))),
+      mk(JOINT_FORM, paste0("blm_", sl, "_indep_first_ftp"), blm_brms_path(paste0("model_joint_indep_first_", sl))),
+      mk(JOINT_FORM, paste0("blm_", sl, "_sub_first_ftp"),   blm_brms_path(paste0("model_joint_sub_first_",   sl))),
       # polynomial joint
-      mk(POLY_JOINT_FORM, d$indep_final_ftp, blm_brms_path(paste0("model_poly_joint_indep_final_", sl))),
-      mk(POLY_JOINT_FORM, d$sub_final_ftp,   blm_brms_path(paste0("model_poly_joint_sub_final_",   sl))),
-      mk(POLY_JOINT_FORM, d$indep_first_ftp, blm_brms_path(paste0("model_poly_joint_indep_first_", sl))),
-      mk(POLY_JOINT_FORM, d$sub_first_ftp,   blm_brms_path(paste0("model_poly_joint_sub_first_",   sl)))
+      mk(POLY_JOINT_FORM, paste0("blm_", sl, "_indep_final_ftp"), blm_brms_path(paste0("model_poly_joint_indep_final_", sl))),
+      mk(POLY_JOINT_FORM, paste0("blm_", sl, "_sub_final_ftp"),   blm_brms_path(paste0("model_poly_joint_sub_final_",   sl))),
+      mk(POLY_JOINT_FORM, paste0("blm_", sl, "_indep_first_ftp"), blm_brms_path(paste0("model_poly_joint_indep_first_", sl))),
+      mk(POLY_JOINT_FORM, paste0("blm_", sl, "_sub_first_ftp"),   blm_brms_path(paste0("model_poly_joint_sub_first_",   sl)))
     )
   }), recursive = FALSE),
   # ---- Whisper (16 models: 8 groups × 2 components) --------------------------
   unlist(lapply(WH_COMPONENTS, function(comp) {
-    d <- wh_data[[comp]]
     list(
       # frequency
-      mk(FREQ_FORM,       d$final,     wh_brms_path(paste0("model_freq_final_",       comp))),
-      mk(FREQ_FORM,       d$first,     wh_brms_path(paste0("model_freq_first_",       comp))),
+      mk(FREQ_FORM,       paste0("wh_", comp, "_final"),     wh_brms_path(paste0("model_freq_final_",       comp))),
+      mk(FREQ_FORM,       paste0("wh_", comp, "_first"),     wh_brms_path(paste0("model_freq_first_",       comp))),
       # predictability
-      mk(PREDIC_FORM,     d$final_ftp, wh_brms_path(paste0("model_predic_final_",     comp))),
-      mk(PREDIC_FORM,     d$first_ftp, wh_brms_path(paste0("model_predic_first_",     comp))),
+      mk(PREDIC_FORM,     paste0("wh_", comp, "_final_ftp"), wh_brms_path(paste0("model_predic_final_",     comp))),
+      mk(PREDIC_FORM,     paste0("wh_", comp, "_first_ftp"), wh_brms_path(paste0("model_predic_first_",     comp))),
       # joint
-      mk(JOINT_FORM,      d$final_ftp, wh_brms_path(paste0("model_joint_final_",      comp))),
-      mk(JOINT_FORM,      d$first_ftp, wh_brms_path(paste0("model_joint_first_",      comp))),
+      mk(JOINT_FORM,      paste0("wh_", comp, "_final_ftp"), wh_brms_path(paste0("model_joint_final_",      comp))),
+      mk(JOINT_FORM,      paste0("wh_", comp, "_first_ftp"), wh_brms_path(paste0("model_joint_first_",      comp))),
       # polynomial joint
-      mk(POLY_JOINT_FORM, d$final_ftp, wh_brms_path(paste0("model_poly_joint_final_", comp))),
-      mk(POLY_JOINT_FORM, d$first_ftp, wh_brms_path(paste0("model_poly_joint_first_", comp)))
+      mk(POLY_JOINT_FORM, paste0("wh_", comp, "_final_ftp"), wh_brms_path(paste0("model_poly_joint_final_", comp))),
+      mk(POLY_JOINT_FORM, paste0("wh_", comp, "_first_ftp"), wh_brms_path(paste0("model_poly_joint_first_", comp)))
     )
   }), recursive = FALSE)
 )
@@ -278,9 +304,10 @@ if (length(pending) == 0L) {
 # ---- Worker function --------------------------------------------------------
 run_one_model <- function(spec) {
   library(brms)
+  data <- DATA_LOOKUP[[spec$data_key]]
   brm(
     formula = as.formula(spec$formula),
-    data    = spec$data,
+    data    = data,
     prior   = set_prior("normal(0, 1)", class = "b"),
     iter    = 6000L, warmup = 3000L, chains = 4L, cores = 4L, seed = 964L,
     backend = "cmdstanr",
@@ -302,7 +329,7 @@ future_map(
   pending,
   run_one_model,
   .progress = TRUE,
-  .options  = furrr_options(packages = "brms")
+  .options  = furrr_options(packages = "brms", globals = list(DATA_LOOKUP = DATA_LOOKUP))
 )
 plan(sequential)
 
