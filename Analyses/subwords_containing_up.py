@@ -441,11 +441,14 @@ def make_plot(results_df, layer_idx, val_metrics, save_path):
     cbar.set_label("Mean P(up-subword-like)", fontsize=10)
 
     poly_deg = 2
-    coeffs   = np.polyfit(log_freq, logits, poly_deg)
-    x_smooth = np.linspace(log_freq.min(), log_freq.max(), 300)
-    y_smooth = np.polyval(coeffs, x_smooth)
-    ax.plot(x_smooth, y_smooth, color="steelblue", linewidth=2,
-            label=f"Poly fit (deg={poly_deg})")
+    try:
+        coeffs   = np.polyfit(log_freq, logits, poly_deg)
+        x_smooth = np.linspace(log_freq.min(), log_freq.max(), 300)
+        y_smooth = np.polyval(coeffs, x_smooth)
+        ax.plot(x_smooth, y_smooth, color="steelblue", linewidth=2,
+                label=f"Poly fit (deg={poly_deg})")
+    except np.linalg.LinAlgError:
+        log.warning("polyfit SVD did not converge at layer %d — skipping trend line", layer_idx)
 
     for _, row in summary_df.nlargest(5, "mean_logit").iterrows():
         ax.annotate(row["verb_up"], (np.log10(row["frequency"]), row["mean_logit"]),
@@ -552,9 +555,6 @@ def main():
         csv_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}.csv")
         layer_df.to_csv(csv_path, index=False)
         log.info("  Saved: %s (%d rows)", csv_path, len(layer_df))
-
-        plot_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}_plot.png")
-        make_plot(layer_df, layer_idx, metrics, plot_path)
 
         all_layer_dfs.append(layer_df)
 
