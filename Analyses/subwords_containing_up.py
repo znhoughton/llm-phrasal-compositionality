@@ -23,7 +23,6 @@ Requires create_train_val_test.py to have been run first.
 import argparse
 import json
 import os
-import pickle
 import logging
 import random
 
@@ -133,6 +132,8 @@ def load_datasets():
         val_records            : list of (sentence, token_pos, label)
         vup_positions          : dict {vup_type: [(sentence, token_pos, word), ...]}
         vup_sentences_filtered : dict {vup_type: [sentence, ...]}
+        vup_predic             : dict {vup_type: float}
+        vup_freq               : dict {vup_type: int}  — from test.csv frequency column
     """
     for fname in ("train.csv", "val.csv", "test.csv"):
         path = os.path.join(DATA_DIR, fname)
@@ -183,7 +184,14 @@ def load_datasets():
     else:
         log.info("  No 'predic' column in test.csv — predictability will be NaN in outputs.")
 
-    return train_records, val_records, vup_positions, vup_sentences_filtered, vup_predic
+    vup_freq = (
+        test_df.drop_duplicates("verb_up")
+        .set_index("verb_up")["frequency"]
+        .to_dict()
+    )
+    log.info("  Frequency loaded for %d V+up types.", len(vup_freq))
+
+    return train_records, val_records, vup_positions, vup_sentences_filtered, vup_predic, vup_freq
 
 
 # ---------------------------------------------------------------------------
@@ -497,10 +505,7 @@ def main():
     n_layers = model.config.num_hidden_layers
     log.info("Will iterate over %d transformer layers (0 to %d)", n_layers, n_layers - 1)
 
-    train_records, val_records, vup_positions, vup_sentences_filtered, vup_predic = load_datasets()
-
-    with open(VUP_PKL_PATH, "rb") as f:
-        _, vup_freq, _, _ = pickle.load(f)
+    train_records, val_records, vup_positions, vup_sentences_filtered, vup_predic, vup_freq = load_datasets()
 
     log.info("Extracting train embeddings (single pass, all layers) ...")
     train_all = extract_all_layers_records(
