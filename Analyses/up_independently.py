@@ -556,9 +556,6 @@ def main():
         layer_df.to_csv(csv_path, index=False)
         log.info("  Saved: %s (%d rows)", csv_path, len(layer_df))
 
-        plot_path = os.path.join(DATA_DIR, f"layer_{layer_idx:02d}_plot.png")
-        make_plot(layer_df, layer_idx, metrics, plot_path)
-
         all_layer_dfs.append(layer_df)
 
         del train_all[layer_idx], val_all[layer_idx], vup_all[layer_idx]
