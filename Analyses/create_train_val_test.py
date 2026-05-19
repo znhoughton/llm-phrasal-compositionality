@@ -438,11 +438,13 @@ def build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, toke
 
     # Load predictability values if corpus stats pkl was provided
     predic = {}
+    corpus_vup_freq = {}
     if CORPUS_STATS_PKL is not None:
-        log.info("Loading corpus stats (predictability) from %s ...", CORPUS_STATS_PKL)
+        log.info("Loading corpus stats from %s ...", CORPUS_STATS_PKL)
         with open(CORPUS_STATS_PKL, "rb") as f:
-            _, _, predic = pickle.load(f)
-        log.info("  Predictability values loaded for %d V+up types", len(predic))
+            corpus_vup_freq, _, predic = pickle.load(f)
+        log.info("  Corpus frequencies: %d types | Predictability: %d types",
+                 len(corpus_vup_freq), len(predic))
 
     test_rows = []
     for vup_type, type_records in vup_positions.items():
@@ -450,7 +452,7 @@ def build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, toke
         for sent, pos, word in type_records:
             row = {
                 "verb_up":        vup_type,
-                "frequency":      vup_freq[vup_type],
+                "frequency":      corpus_vup_freq.get(vup_type, vup_freq[vup_type]),
                 "word":           word,
                 "sentence":       sent,
                 "token_position": pos,
