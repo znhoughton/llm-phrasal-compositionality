@@ -6,3 +6,10 @@
 *.mp3
 c4_10B_2B_local/
 hf_cache/
+model_cache/
+writeup/results/
+writeup/*.html
+writeup/*.pdf
+writeup/writeup_files/
+**/__pycache__/
+*.pyc
