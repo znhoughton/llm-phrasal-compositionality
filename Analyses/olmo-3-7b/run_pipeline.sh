@@ -12,7 +12,7 @@
 set -euo pipefail
 
 export SAFETENSORS_FAST_GPU=1
-export OMP_NUM_THREADS=4
+export OMP_NUM_THREADS=10
 
 MODEL="allenai/Olmo-3-1025-7B"
 DATA_UP="../Data/olmo-3-7b/Data_up"
