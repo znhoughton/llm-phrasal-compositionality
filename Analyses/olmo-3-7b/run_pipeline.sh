@@ -35,7 +35,7 @@ python create_train_val_test.py \
   --data-dir-upsubword "$DATA_UPSUB"       \
   --vup-pkl            "$VUP_PKL"          \
   --upword-pkl         "$UPWORD_PKL"       \
-  --corpus-stats-pkl   "$CORPUS_STATS_PKL"
+  --corpus-stats-pkl   "$CORPUS_STATS_PKL"  # provides Dolma vup_freq + predic
 
 echo ""
 echo "--- Step 2: standalone-up classifier ---"
