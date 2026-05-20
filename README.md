@@ -41,10 +41,6 @@ To rerun the full pipeline from scratch (GPU + infini-gram API access required),
 │   ├── olmo-3-7b/             # classifier outputs: Data_up/, Data_upsubword/
 │   ├── babylm/{opt-125m,opt-350m,opt-1.3b}/
 │   └── whisper/{encoder,decoder}/
-├── paper/
-│   ├── writeup.qmd            # paper source
-│   ├── prepare_results.R      # generates paper/results/ from model cache
-│   └── references.bib
 └── model_cache/               # fitted .rds model objects — gitignored
 ```
 
