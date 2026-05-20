@@ -7,13 +7,9 @@
 c4_10B_2B_local/
 hf_cache/
 model_cache/
-paper/results/
-paper/*.html
-paper/*.pdf
-paper/writeup_files/
+paper/
 **/__pycache__/
 *.pyc
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
-paper/writeup.tex
 Analyses/analysis-script.html
