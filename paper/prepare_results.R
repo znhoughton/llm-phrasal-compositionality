@@ -33,7 +33,7 @@ rm(probe_file, first_line)
 OLMO_CACHE_DIR      = "model_cache/olmo"
 BLM_CACHE_DIR       = "model_cache/babylm"
 WH_CACHE_DIR        = "model_cache/whisper"
-RESULTS_DIR         = "writeup/results"
+RESULTS_DIR         = "paper/results"
 dir.create(RESULTS_DIR, showWarnings = FALSE, recursive = TRUE)
 
 OLMO_FINAL_LAYER    = 31L
