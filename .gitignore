@@ -13,3 +13,7 @@ writeup/*.pdf
 writeup/writeup_files/
 **/__pycache__/
 *.pyc
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+writeup/writeup.tex
+Analyses/analysis-script.html
