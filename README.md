@@ -50,14 +50,16 @@ llm-phrasal-compositionality/
 │   ├── subwords_containing_up.py      # Layer-by-layer classifier (up subword)
 │   ├── get_olmo_corpus_stats.py       # Compute verb frequencies + predictability from Dolma v1.7 (infini-gram API)
 │   ├── get_babylm_corpus_stats.py     # Compute verb frequencies + predictability from BabyLM corpus
-│   ├── check_whisper_corpus.py        # Check speech corpus data sufficiency
+│   ├── export_predic_lookup.py        # Export ftp_lookup.csv from olmo_corpus_stats.pkl
 │   ├── analysis-script.Rmd            # Unified R analysis (params: source = "olmo"|"babylm"|"whisper")
+│   ├── run_models_parallel.R          # Pre-fit all ~80 brms models in parallel (run before analysis-script.Rmd)
 │   ├── olmo-3-7b/
 │   │   └── run_pipeline.sh            # Run full OLMo-3 7B Python pipeline
 │   ├── babylm/
 │   │   └── run_pipeline.sh            # Run full BabyLM Python pipeline
 │   └── whisper/
 │       ├── build_audio_dataset.py     # Audio metadata CSV → WhisperX alignment → dataset.csv
+│       ├── build_whisper_dataset.py   # Whisper dataset construction utilities
 │       ├── run_whisper_classifier.py  # Layer-by-layer encoder+decoder classifier
 │       └── run_pipeline.sh            # Run full Whisper pipeline
 ├── Data/
@@ -83,7 +85,12 @@ llm-phrasal-compositionality/
 │   ├── olmo/
 │   ├── babylm/
 │   └── whisper/
-└── README.md
+└── writeup/
+    ├── writeup.qmd                    # Quarto paper source
+    ├── prepare_results.R              # Generate result CSVs from model cache → writeup/results/
+    ├── results/                       # Generated CSVs read by writeup.qmd — gitignored
+    ├── references.bib                 # Bibliography
+    └── _extensions/acl/              # ACL Quarto format extension
 ```
 
 ---
@@ -158,6 +165,9 @@ each V+up type. Requires internet access; no local corpus files needed.
 cd Analyses/
 python get_olmo_corpus_stats.py
 # → Data/olmo_corpus_stats.pkl
+
+python export_predic_lookup.py
+# → Data/ftp_lookup.csv
 ```
 
 ### Steps 3–5 — Run classifiers *(GPU required)*
@@ -182,20 +192,27 @@ layer, and then evaluated on V+up test-set hidden states from that same layer.
 
 ### Step 6 — R analysis
 
+Fit all brms models (run from `Analyses/`):
+
 ```r
-rmarkdown::render("Analyses/analysis-script.Rmd", params = list(source = "olmo"))
+source("Analyses/run_models_parallel.R")
+# Fits ~80 brms models in parallel and caches them in model_cache/
+# Adjust N_WORKERS at the top of the script to match available cores.
 ```
 
-Or open `Analyses/analysis-script.Rmd` in RStudio, set `params: source: "olmo"`
-in the YAML header, and knit. Fitted model objects are cached in `model_cache/olmo/`
-(gitignored) so re-runs skip refitting.
+Then generate result CSVs and render the writeup (run from project root):
 
-The analysis covers:
-- Effect of **frequency** on logit at first/final layer (brms linear + bam non-linear)
-- Effect of **predictability** on logit at first/final layer
-- **Joint** frequency + predictability effects
-- All three above **across all layers** using `te()` tensor-product smooths
-- 3D surface plots of predicted logit as a function of frequency × layer, predictability × layer, and frequency × predictability
+```r
+source("writeup/prepare_results.R")
+# → writeup/results/*.csv
+
+quarto::quarto_render("writeup/writeup.qmd")
+# → writeup/writeup.pdf, writeup/writeup.html
+```
+
+Alternatively, open `Analyses/analysis-script.Rmd` in RStudio and knit with
+`params: source: "olmo"` to explore the analysis interactively. This script
+fits models inline (without parallelism) and is useful for diagnosis.
 
 ---
 
@@ -230,6 +247,11 @@ Each model runs the same three steps as the OLMo pipeline, writing results to
 `Data/babylm/{opt-125m,opt-350m,opt-1.3b}/{Data_up,Data_upsubword}/`.
 
 ### Step 5 — R analysis
+
+After fitting models via `run_models_parallel.R` (see OLMo Step 6), run
+`writeup/prepare_results.R` and render `writeup/writeup.qmd` as above.
+
+To explore BabyLM interactively:
 
 ```r
 rmarkdown::render("Analyses/analysis-script.Rmd", params = list(source = "babylm"))
@@ -368,6 +390,11 @@ python run_whisper_classifier.py \
 
 ### Step 3 — R analysis
 
+After fitting models via `run_models_parallel.R` and generating CSVs via
+`writeup/prepare_results.R`, render `writeup/writeup.qmd` as above.
+
+To explore Whisper interactively:
+
 ```r
 rmarkdown::render("Analyses/analysis-script.Rmd", params = list(source = "whisper"))
 ```
@@ -465,4 +492,4 @@ pip install whisperx soundfile
 # ffmpeg must also be available on PATH (for audio segment extraction)
 ```
 
-R packages: `tidyverse`, `brms`, `mgcv`, `tidybayes`, `patchwork`, `viridis`, `plotly`, `jsonlite`
+R packages: `tidyverse`, `brms`, `mgcv`, `tidybayes`, `patchwork`, `viridis`, `plotly`, `jsonlite`, `future`, `furrr`
