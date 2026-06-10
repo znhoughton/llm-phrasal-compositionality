@@ -4,6 +4,8 @@
 .Ruserdata
 *.wav
 *.mp3
+*.rds
+*.RDS
 c4_10B_2B_local/
 hf_cache/
 model_cache/
