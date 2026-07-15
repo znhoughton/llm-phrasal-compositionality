@@ -14,4 +14,4 @@ paper/
 *.pyc
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
-Analyses/analysis-script.html
+Analyses/analysis-script.htmlall_layers_results.csv
