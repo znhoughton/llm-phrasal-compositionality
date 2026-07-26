@@ -44,25 +44,36 @@ wasn't fully reverse-engineered (rare enough, and small enough in effect,
 that this wasn't worth further guessing). Not expected to matter in
 practice given how rare this pattern is.
 
-ASSUMPTION FLAGGED AS UNCERTAIN: how the corpus is actually loaded on the
-server. This defaults to the HuggingFace `datasets` library
-("speechcolab/gigaspeech" for GigaSpeech, "mozilla-foundation/common_voice_*"
-for Common Voice), mirroring the precedent already in this repo
-(build_whisper_dataset.py loads LibriSpeech the same way). If the server's
-actual setup differs (e.g. GigaSpeech accessed via a local manifest file
-instead), only load_gigaspeech_segments()/load_common_voice_segments() below
-need to change -- the matching logic (find_up_occurrences) does not depend
-on how the corpus was loaded and should not need to change.
+ASSUMPTION FLAGGED AS UNCERTAIN: the exact manifest filename/schema on the
+server's local corpus mount. up-audio-metadata.csv's own dataset_dir column
+confirms the corpus is read from local disk at /dpluth-data/GigaSpeech/data/
+and /dpluth-data/mcv/en/clips/ -- NOT via the HuggingFace `datasets` library,
+which would pull a different release/version/file-layout than whatever's
+actually on that mount (an earlier version of this script wrongly assumed
+HF `datasets`, matching the precedent in build_whisper_dataset.py for
+LibriSpeech -- that was a mistake specific to this corpus, since the real
+file's own paths point at a local mount, not an HF cache). This version
+reads GigaSpeech's native JSON manifest and Common Voice's native TSV
+manifest directly from --gigaspeech-root/--cv-root. The specific manifest
+filename (GIGASPEECH_MANIFEST_CANDIDATES / CV_MANIFEST_CANDIDATES) and field
+names within it are still a best guess at the official release format and
+haven't been verified against this specific mount -- if load_gigaspeech_
+segments()/load_common_voice_segments() can't find or parse the manifest,
+that's the part to fix; find_up_occurrences() and clean_text() (the matching
+logic) are validated separately and shouldn't need to change.
 
 Run this, then run validate_reconstruction.py to compare against the real
 Data/up-audio-metadata.csv and see exactly how close this gets.
 
 Usage:
     python reconstruct_up_audio_metadata.py --out Data/up-audio-metadata-reconstructed.csv
+    # if the manifest isn't found automatically:
+    python reconstruct_up_audio_metadata.py --gigaspeech-manifest /path/to/GigaSpeech.json \
+        --cv-manifest /path/to/validated.tsv
     python validate_reconstruction.py --reconstructed Data/up-audio-metadata-reconstructed.csv
 
 Requires:
-    pip install datasets pandas tqdm
+    pip install pandas tqdm
 """
 
 import argparse
@@ -108,69 +119,124 @@ def find_up_occurrences(cleaned_text):
 
 
 # ---------------------------------------------------------------------------
-# CORPUS LOADING -- the one part of this script that's a genuine guess about
-# server setup. Adjust these two functions if the actual access method
-# differs (e.g. a local GigaSpeech.json manifest instead of the datasets lib).
+# CORPUS LOADING -- reads directly from the local corpus mount that produced
+# up-audio-metadata.csv (confirmed via its dataset_dir column:
+# /dpluth-data/GigaSpeech/data/ and /dpluth-data/mcv/en/clips/), NOT via the
+# HuggingFace `datasets` library -- that would pull a different release/
+# version/layout than whatever's actually on disk here, with different
+# audio paths than what the real file's `file`/`dataset_dir` columns record.
+# This is still the one part of this script that's a genuine guess (exact
+# manifest filename/schema on this specific mount), since it can't be
+# verified without server access. Adjust GIGASPEECH_MANIFEST_CANDIDATES /
+# CV_MANIFEST_CANDIDATES below to point at the real file(s) if none of the
+# guessed names/fields match what's actually there.
 # ---------------------------------------------------------------------------
 
-def load_gigaspeech_segments(subset="l"):
+GIGASPEECH_MANIFEST_CANDIDATES = [
+    "GigaSpeech.json",
+    "data/GigaSpeech.json",
+    "metadata/GigaSpeech.json",
+]
+
+CV_MANIFEST_CANDIDATES = [
+    "validated.tsv",
+    "train.tsv",
+]
+
+
+def _find_manifest(root, candidates):
+    import os
+    for rel in candidates:
+        p = os.path.join(root, rel)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def load_gigaspeech_segments(root="/dpluth-data/GigaSpeech", manifest_path=None):
     """
     Yields dicts with: sid, file, segment_speaker, begin_time, end_time,
     source (audiobook/podcast/youtube), text, dataset_dir.
 
-    GigaSpeech's HF datasets release nests segments under each long audio
-    file; this reproduces that structure. Subset "l" (large, ~2500h) is a
-    starting guess -- adjust to whatever subset best matches the real
-    file's ~256k rows (validate_reconstruction.py will tell you if subset
-    coverage is too small or too large).
+    Reads GigaSpeech's own native JSON manifest directly (the official
+    SpeechColab release format: a top-level {"audios": [...]} list, each
+    entry with an "aid", a "path" relative to the release root, a
+    "category" (audiobook/podcast/youtube/...), and a nested "segments"
+    list with per-segment "sid"/"begin_time"/"end_time"/"text_tn" (or
+    "text")/"speaker"). Field names are checked defensively (a few
+    plausible alternatives per field) since the exact schema on this
+    specific mount hasn't been verified against server access.
     """
-    from datasets import load_dataset
+    import json
+    import os
 
-    log.info("Loading GigaSpeech subset '%s' via HuggingFace datasets ...", subset)
-    ds = load_dataset("speechcolab/gigaspeech", subset, trust_remote_code=True)
+    manifest_path = manifest_path or _find_manifest(root, GIGASPEECH_MANIFEST_CANDIDATES)
+    if manifest_path is None:
+        raise FileNotFoundError(
+            f"No GigaSpeech manifest found under {root} (tried: {GIGASPEECH_MANIFEST_CANDIDATES}). "
+            "Pass --gigaspeech-manifest explicitly if it lives somewhere else / under a different name."
+        )
+    log.info("Loading GigaSpeech manifest from %s ...", manifest_path)
 
-    for split_name, split in ds.items():
-        for row in tqdm(split, desc=f"GigaSpeech[{split_name}]"):
-            sid = row.get("segment_id") or row.get("sid")
-            aid = row.get("audio_id") or row.get("aid") or (sid.rsplit("_S", 1)[0] if sid else None)
-            category = str(row.get("category", "")).lower()  # audiobook/podcast/youtube in some releases
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    audios = manifest.get("audios", manifest if isinstance(manifest, list) else [])
+    for audio in tqdm(audios, desc="GigaSpeech audios"):
+        aid = audio.get("aid") or audio.get("audio_id")
+        path = audio.get("path") or audio.get("file")
+        category = str(audio.get("category", audio.get("source", ""))).lower()
+        for seg in audio.get("segments", []):
+            sid = seg.get("sid") or seg.get("segment_id")
+            text = seg.get("text_tn") or seg.get("text") or ""
             yield {
                 "sid": sid,
-                "file": row.get("path", f"audio/{category}/{aid}.opus"),
-                "segment_speaker": row.get("speaker", "N/A"),
-                "begin_time": row.get("begin_time"),
-                "end_time": row.get("end_time"),
+                "file": path,
+                "segment_speaker": seg.get("speaker", "N/A"),
+                "begin_time": seg.get("begin_time"),
+                "end_time": seg.get("end_time"),
                 "source": category or "unknown",
                 "ds_source": "gigaspeech",
-                "dataset_dir": "/dpluth-data/GigaSpeech/data/",
-                "text": row.get("text", ""),
+                "dataset_dir": os.path.join(root, "data") + "/",
+                "text": text,
             }
 
 
-def load_common_voice_segments(lang="en"):
+def load_common_voice_segments(root="/dpluth-data/mcv/en", manifest_path=None):
     """
-    Yields dicts in the same shape as load_gigaspeech_segments(), for the
-    Mozilla Common Voice portion (3% of the real file, ds_source =
-    "mozilla_common_voice", source = "personal device" in every real row --
-    this is a fixed label, not derived per-clip, since Common Voice clips
-    are all self-recorded on personal devices by design).
+    Yields dicts in the same shape as load_gigaspeech_segments(), reading
+    Common Voice's own native TSV manifest directly (columns: client_id,
+    path, sentence, ... -- the standard raw Common Voice distribution
+    format). ds_source="mozilla_common_voice", source="personal device"
+    for every row (a fixed label, not derived per-clip -- Common Voice
+    clips are all self-recorded on personal devices by design, matching
+    what's already in the real up-audio-metadata.csv).
     """
-    from datasets import load_dataset
+    import csv
+    import os
 
-    log.info("Loading Common Voice (%s) via HuggingFace datasets ...", lang)
-    ds = load_dataset("mozilla-foundation/common_voice_16_1", lang, trust_remote_code=True)
+    manifest_path = manifest_path or _find_manifest(root, CV_MANIFEST_CANDIDATES)
+    if manifest_path is None:
+        raise FileNotFoundError(
+            f"No Common Voice manifest found under {root} (tried: {CV_MANIFEST_CANDIDATES}). "
+            "Pass --cv-manifest explicitly if it lives somewhere else / under a different name."
+        )
+    log.info("Loading Common Voice manifest from %s ...", manifest_path)
 
-    for split_name, split in ds.items():
-        for row in tqdm(split, desc=f"CommonVoice[{split_name}]"):
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in tqdm(reader, desc="Common Voice clips"):
+            client_id = row.get("client_id", "")
+            clip_path = row.get("path", "")
             yield {
-                "sid": row.get("client_id", "") + "_" + str(row.get("path", "")),
-                "file": row.get("path", ""),
+                "sid": f"{client_id}_{clip_path}",
+                "file": clip_path,
                 "segment_speaker": "N/A",
                 "begin_time": 0.0,
-                "end_time": None,  # Common Voice clips are single-utterance; no sub-segment offsets
+                "end_time": None,  # single-utterance clips; no sub-segment offsets
                 "source": "personal device",
                 "ds_source": "mozilla_common_voice",
-                "dataset_dir": "/dpluth-data/mcv/en/clips/",
+                "dataset_dir": os.path.join(root, "clips") + "/",
                 "text": row.get("sentence", ""),
             }
 
@@ -182,8 +248,16 @@ def load_common_voice_segments(lang="en"):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="Data/up-audio-metadata-reconstructed.csv")
-    parser.add_argument("--gigaspeech-subset", default="l",
-                         help="GigaSpeech subset to load (xs/s/m/l/xl). Default: l")
+    parser.add_argument("--gigaspeech-root", default="/dpluth-data/GigaSpeech",
+                         help="Local GigaSpeech release root. Default: /dpluth-data/GigaSpeech")
+    parser.add_argument("--gigaspeech-manifest", default=None,
+                         help="Explicit path to GigaSpeech's manifest JSON, if it's not found "
+                              "automatically under --gigaspeech-root.")
+    parser.add_argument("--cv-root", default="/dpluth-data/mcv/en",
+                         help="Local Common Voice release root. Default: /dpluth-data/mcv/en")
+    parser.add_argument("--cv-manifest", default=None,
+                         help="Explicit path to Common Voice's manifest TSV, if it's not found "
+                              "automatically under --cv-root.")
     parser.add_argument("--skip-common-voice", action="store_true",
                          help="Skip Common Voice (only ~3%% of the real file); useful for a faster first pass.")
     parser.add_argument("--max-segments", type=int, default=None,
@@ -214,7 +288,7 @@ def main():
                 "matched_phrase": matched_phrase, "found": found,
             })
 
-    for seg in load_gigaspeech_segments(args.gigaspeech_subset):
+    for seg in load_gigaspeech_segments(args.gigaspeech_root, args.gigaspeech_manifest):
         process(seg)
         n_processed += 1
         if args.max_segments and n_processed >= args.max_segments:
@@ -222,7 +296,7 @@ def main():
 
     if not args.skip_common_voice:
         n_cv = 0
-        for seg in load_common_voice_segments():
+        for seg in load_common_voice_segments(args.cv_root, args.cv_manifest):
             process(seg)
             n_cv += 1
             if args.max_segments and n_cv >= args.max_segments:
