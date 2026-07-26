@@ -76,6 +76,15 @@ def main():
     if recon_pairs:
         print(f"Precision (fraction of recon pairs correct): {len(overlap) / len(recon_pairs):.4f}")
 
+    print("\nPrecision broken down by ds_source (is one source dragging down the average?):")
+    sid_to_source = dict(zip(recon["sid"].astype(str), recon["ds_source"]))
+    for source in recon["ds_source"].unique():
+        source_pairs = {(sid, mp) for (sid, mp) in recon_pairs if sid_to_source.get(sid) == source}
+        source_overlap = source_pairs & real_pairs
+        n = len(source_pairs)
+        if n:
+            print(f"  {source}: {len(source_overlap)}/{n} ({len(source_overlap)/n:.2%})")
+
     print()
     print("=" * 70)
     print("4. FOR MATCHED PAIRS: do begin_time/end_time/cleaned_text also agree?")
