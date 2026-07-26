@@ -25,7 +25,14 @@ because "up" is always the *entire* word there, not embedded in a larger one).
 Expected metadata schema (same columns as up-audio-metadata.csv, but
 matched_phrase is the up-containing WORD, e.g. "update", not a V+up phrase):
     sid, file, segment_speaker, begin_time, end_time, source, ds_source,
-    dataset_dir, text, cleaned_text, matched_phrase, found
+    dataset_dir, text, cleaned_text, matched_phrase, found, up_char_idx
+
+up_char_idx (from create_dataset.py's find_up_letter_position()) is the
+0-based character position of the phonemically-valid "up" within
+matched_phrase, used to disambiguate words that spell "up" more than once
+but are only pronounced that way at one of those positions. Optional --
+falls back to the first literal "up" substring if the column is missing
+(e.g. metadata generated before this was added).
 
 Restricted to ONE row per unique up-containing word type at the metadata
 level is NOT done here -- that dedup happens downstream in
@@ -123,6 +130,8 @@ def main():
         end_time    = float(row["end_time"])
         transcript  = str(row.get("cleaned_text") or row.get("text", "")).strip()
         target_word = str(row["matched_phrase"]).strip().lower()
+        up_char_idx = row.get("up_char_idx")
+        up_char_idx = int(up_char_idx) if pd.notna(up_char_idx) else None
 
         if not target_word or not UPWORD_RE.fullmatch(target_word) or target_word in UPWORD_EXCLUDE:
             n_skipped_early += 1
@@ -141,6 +150,7 @@ def main():
             "end_time":         end_time,
             "transcript":       transcript,
             "target_word":      target_word,
+            "up_char_idx":      up_char_idx,
             "wav_path":         os.path.join(audio_dir, f"{sid}.wav"),
             "need_char_alignment": True,
         })
@@ -244,7 +254,9 @@ def main():
             n_skipped_no_word_seg += 1
             continue
 
-        up_span = find_upword_char_span(char_entries, target_ws, c["target_word"])
+        up_span = find_upword_char_span(
+            char_entries, target_ws, c["target_word"], up_idx=c["up_char_idx"]
+        )
         if up_span is None:
             n_skipped_char_mismatch += 1
             continue
