@@ -17,6 +17,12 @@ that returns all encoder and decoder hidden states simultaneously.
 
 Reads:
     DATA_DIR/dataset.csv  (built by build_audio_dataset.py)
+    --subword-dataset PATH (optional; dataset_subword.csv built by
+        build_subword_audio_dataset.py). If given, up-within-word instances
+        (e.g. "update", "upon") are combined with standalone-"up" instances
+        for classifier TRAINING/VALIDATION only -- Experiment 2 replication.
+        The V+up test set, model, and layers are completely unchanged from
+        Experiment 1; only the classifier's training data differs.
 
 Outputs:
     DATA_DIR/encoder/layer_XX.csv, all_layers_results.csv, layer_metadata.json
@@ -24,6 +30,7 @@ Outputs:
 
 Usage:
     python run_whisper_classifier.py [--data-dir DIR] [--model MODEL] [--device DEVICE]
+    python run_whisper_classifier.py --subword-dataset ../../Data/whisper/dataset_subword.csv
 
 Requires:
     pip install transformers torch soundfile scikit-learn pandas numpy tqdm
@@ -95,6 +102,14 @@ def parse_args():
              "uses Dolma corpus counts instead of audio occurrence counts. "
              "Default: None",
     )
+    parser.add_argument(
+        "--subword-dataset", default=None,
+        help="Path to dataset_subword.csv (produced by build_subword_audio_dataset.py). "
+             "If provided, up-within-word instances are combined with standalone-'up' "
+             "instances for classifier training/validation only (Experiment 2 "
+             "replication) -- the V+up test set is unaffected. Default: None "
+             "(Experiment 1 behavior, unchanged).",
+    )
     return parser.parse_args()
 
 
@@ -121,7 +136,15 @@ def load_model(model_name, device):
 # SPLITS
 # ---------------------------------------------------------------------------
 
-def build_splits(df):
+def build_splits(df, subword_df=None):
+    """
+    subword_df: optional DataFrame from dataset_subword.csv (label="subword_up",
+    upword_type=<word>). If provided, up to N_TRAIN + N_VAL unique up-word
+    types are combined with the standalone-"up" positives for train/val only,
+    mirroring create_train_val_test.py's design for the text models (1,000
+    standalone + 1,000 unique up-within-word types). The V+up test set is
+    built from df alone in either case and is completely unaffected.
+    """
     # "word_up"      : non-V+up rows — used for train/val
     # "standalone_up" : legacy label — also accepted for backward compatibility
     standalone = df[df.label.isin(["word_up", "standalone_up"])].copy()
@@ -153,6 +176,43 @@ def build_splits(df):
 
     train_pos = standalone.iloc[:N_TRAIN].copy()
     val_pos   = standalone.iloc[N_TRAIN : N_TRAIN + N_VAL].copy()
+    train_pos["target"] = 1
+    val_pos["target"]   = 1
+
+    if subword_df is not None and len(subword_df) > 0:
+        # One row per unique up-word type (e.g. one "update"), mirroring
+        # all_upword_pairs in create_train_val_test.py.
+        subword_unique = (
+            subword_df.groupby("upword_type", group_keys=False)
+            .apply(lambda g: g.sample(n=1, random_state=RANDOM_SEED))
+            .sample(frac=1, random_state=RANDOM_SEED)
+            .reset_index(drop=True)
+        )
+        log.info("Unique up-word types available: %d", len(subword_unique))
+        if len(subword_unique) < N_TRAIN + N_VAL:
+            log.warning(
+                "Fewer unique up-word types (%d) than N_TRAIN+N_VAL (%d); "
+                "using all available, split proportionally.",
+                len(subword_unique), N_TRAIN + N_VAL,
+            )
+            n_sub_train = int(len(subword_unique) * N_TRAIN / (N_TRAIN + N_VAL))
+        else:
+            n_sub_train = N_TRAIN
+            subword_unique = subword_unique.iloc[: N_TRAIN + N_VAL]
+
+        subword_train = subword_unique.iloc[:n_sub_train].copy()
+        subword_val   = subword_unique.iloc[n_sub_train:].copy()
+        subword_train["target"] = 1
+        subword_val["target"]   = 1
+
+        train_pos = pd.concat([train_pos, subword_train], ignore_index=True)
+        val_pos   = pd.concat([val_pos, subword_val], ignore_index=True)
+        log.info(
+            "Combined positives — Train: %d (%d standalone + %d subword) | "
+            "Val: %d (%d standalone + %d subword)",
+            len(train_pos), N_TRAIN, len(subword_train),
+            len(val_pos), N_VAL, len(subword_val),
+        )
 
     def make_neg(rows):
         neg = rows.copy()
@@ -161,8 +221,6 @@ def build_splits(df):
         neg["target"]   = 0
         return neg
 
-    train_pos["target"] = 1
-    val_pos["target"]   = 1
     train_df = pd.concat([train_pos, make_neg(train_pos)]).sample(
         frac=1, random_state=RANDOM_SEED
     ).reset_index(drop=True)
@@ -191,6 +249,23 @@ def find_word_token_ids(processor, word):
                       f" {word.upper()}", word.upper()]:
         ids.update(processor.tokenizer.encode(candidate, add_special_tokens=False))
     return ids
+
+
+def find_subword_up_position(processor, tokens):
+    """
+    For subword_up rows: find the position of the LAST token in the decoder
+    sequence whose decoded string contains "up" as a substring. Mirrors
+    resolve_upword_positions() in create_train_val_test.py exactly (same
+    "scan backward, take first hit" rule), since there's no fixed token-id
+    set to look up -- unlike standalone "up", the up-containing word (e.g.
+    "update") may tokenize into a completely different BPE piece depending
+    on the specific word and its context.
+    """
+    for k in range(len(tokens) - 1, -1, -1):
+        decoded = processor.tokenizer.decode([tokens[k]])
+        if "up" in decoded.lower():
+            return k
+    return None
 
 
 def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
@@ -245,21 +320,30 @@ def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
                 enc[li].append(emb)
 
             # ---- Decoder: hidden state at the target token position ----
-            # Positives (target=1): find the "up" token.
+            # Positives (target=1): find the "up" token -- for standalone
+            #   "up"/V+up rows this is a fixed token-id lookup (up_ids); for
+            #   subword_up rows the up-containing word (e.g. "update") may
+            #   tokenize to a different BPE piece each time, so its position
+            #   is found dynamically per-row instead (mirrors
+            #   resolve_upword_positions() in create_train_val_test.py).
             # Negatives (target=0): find the neg_word token so the classifier
             #   sees genuinely different embeddings for the two classes.
             tokens     = decoder_input_ids[0].tolist()
             target_val = int(row["target"]) if "target" in row else 1
+            is_subword = row.get("label") == "subword_up"
 
-            if target_val == 1:
-                target_ids = up_ids
+            target_positions = None
+            if target_val == 1 and is_subword:
+                pos = find_subword_up_position(processor, tokens)
+                target_positions = [pos] if pos is not None else []
+            elif target_val == 1:
+                target_positions = [j for j, t in enumerate(tokens) if t in up_ids]
             else:
                 nw = str(row.get("neg_word", "")).strip()
                 if nw not in neg_word_id_cache:
                     neg_word_id_cache[nw] = find_word_token_ids(processor, nw)
                 target_ids = neg_word_id_cache[nw]
-
-            target_positions = [j for j, t in enumerate(tokens) if t in target_ids]
+                target_positions = [j for j, t in enumerate(tokens) if t in target_ids]
 
             if not target_positions:
                 for li in range(n_dec):
@@ -388,7 +472,18 @@ def main():
         df.label.isin(["word_up", "standalone_up"]).sum(),
     )
 
-    train_df, val_df, test_df, qualifying, vup_counts = build_splits(df)
+    subword_df = None
+    if args.subword_dataset:
+        assert os.path.exists(args.subword_dataset), (
+            f"{args.subword_dataset} not found — run build_subword_audio_dataset.py first."
+        )
+        subword_df = pd.read_csv(args.subword_dataset)
+        log.info(
+            "Loaded subword-up dataset: %d rows | %d unique up-word types",
+            len(subword_df), subword_df["upword_type"].nunique(),
+        )
+
+    train_df, val_df, test_df, qualifying, vup_counts = build_splits(df, subword_df=subword_df)
 
     # Use Dolma corpus frequencies if a pkl is provided; fall back to audio occurrence counts
     if args.corpus_stats_pkl:
