@@ -136,6 +136,12 @@ ftp_lookup <- read_csv("../Data/ftp_lookup.csv", show_col_types = FALSE) %>%
 load_whisper_component <- function(path, comp) {
   read_csv(path, show_col_types = FALSE) %>%
     select(-any_of("predic")) %>%
+    # Position within each (layer, verb_up) block, computed on the untouched
+    # file order -- used below to reattach "up" duration, which was computed
+    # internally during feature extraction but never saved to this CSV.
+    group_by(layer, verb_up) %>%
+    mutate(.pos = row_number()) %>%
+    ungroup() %>%
     mutate(component = comp,
            log_freq = log(frequency),
            verb_up_chr = as.character(verb_up)) %>%
@@ -162,6 +168,84 @@ whisper_first_ftp <- whisper_first %>% filter(!is.na(log_predic)) %>%
   group_by(component) %>%
   mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
 
+# ---- Duration control (reviewer-requested, ARR 2026 May, Y2UE) -------------
+# "up" duration (up_end - up_start) isn't saved in all_layers_results.csv --
+# it's computed internally during feature extraction (run_whisper_classifier.py)
+# but dropped before writing the per-layer CSVs. We reconstruct it from the
+# raw dataset.csv using the exact same deterministic selection logic as
+# build_splits() in that script: filter to label == "vup", keep types with
+# >= MIN_FREQ_VUP occurrences, take the first N_TEST_PER_TYPE rows per type
+# in their original (unshuffled) file order.
+#
+# The reconstructed rows are matched back to all_layers_results.csv by
+# position within each (layer, verb_up) block (via .pos above), not by row
+# content, since the saved CSVs retain no row ID. Where a V+up type's row
+# count doesn't match between the reconstruction and the saved data (some
+# row(s) were dropped during extraction -- e.g. a failed audio read, or for
+# the decoder, no matching token in the tokenized transcript), we cannot tell
+# *which* occurrence(s) were dropped, so that type is excluded from the
+# duration analysis rather than guessed at.
+message("Reconstructing 'up' duration for Whisper items...")
+
+MIN_FREQ_VUP    <- 5L
+N_TEST_PER_TYPE <- 20L
+
+wh_dataset <- read_csv("../Data/whisper/dataset.csv", show_col_types = FALSE)
+vup_df     <- wh_dataset %>% filter(label == "vup")
+qualifying <- vup_df %>% count(verb_up, name = "n") %>%
+  filter(n >= MIN_FREQ_VUP) %>% pull(verb_up)
+
+recon_duration <- vup_df %>%
+  filter(verb_up %in% qualifying) %>%
+  group_by(verb_up) %>%
+  slice_head(n = N_TEST_PER_TYPE) %>%
+  mutate(.pos = row_number(), duration = up_end - up_start) %>%
+  ungroup() %>%
+  select(verb_up, .pos, duration)
+
+attach_duration <- function(df, comp_name) {
+  ref_layer <- min(df$layer)
+  ref       <- df %>% filter(layer == ref_layer)
+
+  counts <- inner_join(
+    recon_duration %>% count(verb_up, name = "n_recon"),
+    ref             %>% count(verb_up, name = "n_saved"),
+    by = "verb_up"
+  )
+  mismatched <- counts %>% filter(n_recon != n_saved)
+  if (nrow(mismatched) > 0) {
+    message(sprintf(
+      "  [%s] %d/%d V+up types have mismatched row counts (rows dropped during extraction); excluding them from the duration analysis.",
+      comp_name, nrow(mismatched), nrow(counts)
+    ))
+  }
+  good_types <- counts %>% filter(n_recon == n_saved) %>% pull(verb_up)
+
+  out <- df %>% left_join(
+    recon_duration %>% filter(verb_up %in% good_types),
+    by = c("verb_up", ".pos")
+  )
+
+  n_assigned <- out %>% filter(layer == ref_layer) %>% summarise(n = sum(!is.na(duration))) %>% pull(n)
+  message(sprintf(
+    "  [%s] duration assigned for %d/%d reference-layer rows (%d/%d V+up types retained).",
+    comp_name, n_assigned, nrow(ref), length(good_types), nrow(counts)
+  ))
+  out
+}
+
+whisper_all_dur <- bind_rows(
+  attach_duration(encoder, "encoder"),
+  attach_duration(decoder, "decoder")
+)
+
+whisper_final_duration_ftp <- whisper_all_dur %>%
+  filter(layer == WH_FINAL_LAYER, !is.na(log_predic), !is.na(duration)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic)),
+         c_duration  = c(scale(duration))) %>%
+  ungroup()
+
 # ---- Pre-subset per model / component (avoids serializing full datasets) ----
 blm_data <- setNames(lapply(BLM_TAGS, function(tag) list(
   indep_final     = blm_indep_final     %>% filter(model == tag),
@@ -175,10 +259,11 @@ blm_data <- setNames(lapply(BLM_TAGS, function(tag) list(
 )), BLM_TAGS)
 
 wh_data <- setNames(lapply(WH_COMPONENTS, function(comp) list(
-  final     = whisper_final     %>% filter(component == comp),
-  first     = whisper_first     %>% filter(component == comp),
-  final_ftp = whisper_final_ftp %>% filter(component == comp),
-  first_ftp = whisper_first_ftp %>% filter(component == comp)
+  final              = whisper_final              %>% filter(component == comp),
+  first              = whisper_first              %>% filter(component == comp),
+  final_ftp          = whisper_final_ftp          %>% filter(component == comp),
+  first_ftp          = whisper_first_ftp          %>% filter(component == comp),
+  final_duration_ftp = whisper_final_duration_ftp %>% filter(component == comp)
 )), WH_COMPONENTS)
 
 # ---- Build data lookup (exported once per worker, not once per task) --------
@@ -204,8 +289,8 @@ DATA_LOOKUP <- c(
   }), recursive = FALSE),
   unlist(lapply(WH_COMPONENTS, function(comp) {
     d <- wh_data[[comp]]
-    setNames(list(d$final, d$first, d$final_ftp, d$first_ftp),
-             paste0("wh_", comp, c("_final", "_first", "_final_ftp", "_first_ftp")))
+    setNames(list(d$final, d$first, d$final_ftp, d$first_ftp, d$final_duration_ftp),
+             paste0("wh_", comp, c("_final", "_first", "_final_ftp", "_first_ftp", "_final_duration_ftp")))
   }), recursive = FALSE)
 )
 
@@ -216,6 +301,10 @@ JOINT_FORM      <- "logit ~ c_log_freq * c_log_predic + (1 | verb_up)"
 POLY_JOINT_FORM <- paste0("logit ~ c_log_freq + I(c_log_freq^2) + ",
                            "c_log_predic + I(c_log_predic^2) + ",
                            "c_log_freq:c_log_predic + (1 | verb_up)")
+# Duration-controlled robustness check for Whisper (ARR 2026 May, Y2UE):
+# does the frequency/predictability effect survive once "up"'s own duration
+# (a proxy for phonetic reduction) is partialled out?
+JOINT_DURATION_FORM <- "logit ~ c_log_freq * c_log_predic + c_duration + (1 | verb_up)"
 
 mk <- function(formula, data_key, file) list(formula = formula, data_key = data_key, file = file)
 
@@ -230,18 +319,12 @@ model_specs <- c(
     # predictability
     mk(PREDIC_FORM, "olmo_indep_final_ftp", olmo_brms_path("model_predic_up_independently")),
     mk(PREDIC_FORM, "olmo_sub_final_ftp",   olmo_brms_path("model_predic_up_subword")),
-    mk(PREDIC_FORM, "olmo_indep_first_ftp", olmo_brms_path("model_predic_up_independently_first_layer")),
-    mk(PREDIC_FORM, "olmo_sub_first_ftp",   olmo_brms_path("model_predic_up_subword_first_layer")),
     # joint (interaction)
     mk(JOINT_FORM, "olmo_indep_final_ftp",  olmo_brms_path("model_freq_predic_up_independently")),
-    mk(JOINT_FORM, "olmo_sub_final_ftp",    olmo_brms_path("model_freq_predic_up_subword")),
-    mk(JOINT_FORM, "olmo_indep_first_ftp",  olmo_brms_path("model_freq_predic_up_independently_first")),
-    mk(JOINT_FORM, "olmo_sub_first_ftp",    olmo_brms_path("model_freq_predic_up_subword_first")),
-    # polynomial joint
-    mk(POLY_JOINT_FORM, "olmo_indep_final_ftp", olmo_brms_path("model_poly_joint_indep_final")),
-    mk(POLY_JOINT_FORM, "olmo_sub_final_ftp",   olmo_brms_path("model_poly_joint_sub_final")),
-    mk(POLY_JOINT_FORM, "olmo_indep_first_ftp", olmo_brms_path("model_poly_joint_indep_first")),
-    mk(POLY_JOINT_FORM, "olmo_sub_first_ftp",   olmo_brms_path("model_poly_joint_sub_first"))
+    mk(JOINT_FORM, "olmo_sub_final_ftp",    olmo_brms_path("model_freq_predic_up_subword"))
+    # "_first_layer"/"_first" (predictability, joint) and all "poly_joint"
+    # specs removed: confirmed unused in prepare_results.R/writeup (see notes
+    # there) and never fully fit -- no point fitting them now.
   ),
   # ---- BabyLM (48 models: 16 groups × 3 tags) --------------------------------
   unlist(lapply(BLM_TAGS, function(tag) {
@@ -281,9 +364,10 @@ model_specs <- c(
       # joint
       mk(JOINT_FORM,      paste0("wh_", comp, "_final_ftp"), wh_brms_path(paste0("model_joint_final_",      comp))),
       mk(JOINT_FORM,      paste0("wh_", comp, "_first_ftp"), wh_brms_path(paste0("model_joint_first_",      comp))),
-      # polynomial joint
-      mk(POLY_JOINT_FORM, paste0("wh_", comp, "_final_ftp"), wh_brms_path(paste0("model_poly_joint_final_", comp))),
-      mk(POLY_JOINT_FORM, paste0("wh_", comp, "_first_ftp"), wh_brms_path(paste0("model_poly_joint_first_", comp)))
+      # polynomial joint: removed -- confirmed unused in prepare_results.R/writeup
+      # (never read downstream) and 2 of the 4 were never fully fit anyway.
+      # joint, controlling for "up" duration (phonetic-reduction robustness check)
+      mk(JOINT_DURATION_FORM, paste0("wh_", comp, "_final_duration_ftp"), wh_brms_path(paste0("model_joint_duration_final_", comp)))
     )
   }), recursive = FALSE)
 )
