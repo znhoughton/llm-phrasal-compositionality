@@ -48,15 +48,18 @@ machine that doesn't have it yet).
 Dataset 2 (up-CONTAINING WORD candidates, e.g. "update", "upon", "backup"):
 the new data needed for the Whisper Experiment 2 replication (a sense-
 agnostic "up" positive class, mirroring the text models' design). Matches
-Analyses/create_dataset.py's process for its own Dataset 2 exactly, not
-just the UPWORD_RE/UPWORD_EXCLUDE matching rule: MAX_SEGMENTS_PER_UPWORD
-(=50, mirroring MAX_SENTENCES_PER_UPWORD there) caps how many example rows
-get stored per up-word type, so a handful of very common words (e.g.
-"couple", "upon", "support") don't dominate the dataset; MIN_FREQ_UPWORD
-(=10, same value and same strict ">" comparison as the text side) then
-drops any type with too few total occurrences across the whole corpus scan
-after collection. Feeds into build_subword_audio_dataset.py (matched_phrase
-= the up-containing word).
+Analyses/create_dataset.py's process for its own Dataset 2, not just the
+UPWORD_RE/UPWORD_EXCLUDE matching rule: MAX_SEGMENTS_PER_UPWORD (=50,
+mirroring MAX_SENTENCES_PER_UPWORD there) caps how many example rows get
+stored per up-word type, so a handful of very common words (e.g. "couple",
+"upon", "support") don't dominate the dataset; MIN_FREQ_UPWORD then drops
+any type with too few total occurrences across the whole corpus scan after
+collection. MIN_FREQ_UPWORD is set to 5 here, lower than the text side's 10
+-- at 10, the audio corpus (much smaller than the text corpora used for
+OLMo/BabyLM) only yielded 889 qualifying types against a target of 2000 for
+a 1000/1000 train/val split, so the threshold was loosened specifically for
+this audio replication to admit more (rarer) types. Feeds into
+build_subword_audio_dataset.py (matched_phrase = the up-containing word).
 
 Like Dataset 1, this is only (re)generated if its output file doesn't
 already exist -- once created, later runs won't blow it away by default,
@@ -99,12 +102,15 @@ CLEAN_RE = re.compile(r"[.,!?;:'\"‘’“”\-]")
 UPWORD_RE = re.compile(r"\b([a-z]*up[a-z]+|[a-z]+up[a-z]*)\b", re.IGNORECASE)
 UPWORD_EXCLUDE = {"up", "ups"}
 
-# Same values as Analyses/create_dataset.py's Dataset 2 (MAX_SENTENCES_PER_UPWORD,
-# MIN_FREQ_UPWORD): cap stored example rows per up-word type so a handful of
-# very common words don't dominate, and drop types with too few total
-# occurrences across the whole corpus scan.
+# MAX_SEGMENTS_PER_UPWORD matches Analyses/create_dataset.py's Dataset 2
+# (MAX_SENTENCES_PER_UPWORD): cap stored example rows per up-word type so a
+# handful of very common words don't dominate. MIN_FREQ_UPWORD (drop types
+# with too few total occurrences across the whole corpus scan) is lower here
+# (5 vs. the text side's 10) -- the audio corpus is much smaller, and 10 only
+# yielded 889 qualifying types against the 2000 target for a 1000/1000
+# train/val split.
 MAX_SEGMENTS_PER_UPWORD = 50
-MIN_FREQ_UPWORD = 10
+MIN_FREQ_UPWORD = 5
 
 
 def clean_text(text):

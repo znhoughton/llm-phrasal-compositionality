@@ -246,6 +246,28 @@ whisper_final_duration_ftp <- whisper_all_dur %>%
          c_duration  = c(scale(duration))) %>%
   ungroup()
 
+# ---- Subword condition (Experiment 2 replication) ---------------------------
+# Classifier trained with subword positives ("up" within a larger word, e.g.
+# "update") combined with standalone positives (see build_splits() in
+# run_whisper_classifier.py); the test set is unchanged (still V+up
+# instances), so all_layers_results.csv here has the same schema as the
+# non-subword file above -- only the classifier's training data differs.
+message("Loading Whisper subword data...")
+encoder_sub     <- load_whisper_component("../Data/whisper_subword/encoder/all_layers_results.csv", "encoder")
+decoder_sub     <- load_whisper_component("../Data/whisper_subword/decoder/all_layers_results.csv", "decoder")
+whisper_all_sub <- bind_rows(encoder_sub, decoder_sub) %>%
+  mutate(component = factor(component, levels = c("encoder", "decoder")))
+
+whisper_final_sub <- whisper_all_sub %>% filter(layer == WH_FINAL_LAYER)
+whisper_first_sub <- whisper_all_sub %>% filter(layer == 0L)
+
+whisper_final_ftp_sub <- whisper_final_sub %>% filter(!is.na(log_predic)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+whisper_first_ftp_sub <- whisper_first_sub %>% filter(!is.na(log_predic)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+
 # ---- Pre-subset per model / component (avoids serializing full datasets) ----
 blm_data <- setNames(lapply(BLM_TAGS, function(tag) list(
   indep_final     = blm_indep_final     %>% filter(model == tag),
@@ -263,7 +285,11 @@ wh_data <- setNames(lapply(WH_COMPONENTS, function(comp) list(
   first              = whisper_first              %>% filter(component == comp),
   final_ftp          = whisper_final_ftp          %>% filter(component == comp),
   first_ftp          = whisper_first_ftp          %>% filter(component == comp),
-  final_duration_ftp = whisper_final_duration_ftp %>% filter(component == comp)
+  final_duration_ftp = whisper_final_duration_ftp %>% filter(component == comp),
+  sub_final          = whisper_final_sub          %>% filter(component == comp),
+  sub_first          = whisper_first_sub          %>% filter(component == comp),
+  sub_final_ftp      = whisper_final_ftp_sub      %>% filter(component == comp),
+  sub_first_ftp      = whisper_first_ftp_sub      %>% filter(component == comp)
 )), WH_COMPONENTS)
 
 # ---- Build data lookup (exported once per worker, not once per task) --------
@@ -289,8 +315,10 @@ DATA_LOOKUP <- c(
   }), recursive = FALSE),
   unlist(lapply(WH_COMPONENTS, function(comp) {
     d <- wh_data[[comp]]
-    setNames(list(d$final, d$first, d$final_ftp, d$first_ftp, d$final_duration_ftp),
-             paste0("wh_", comp, c("_final", "_first", "_final_ftp", "_first_ftp", "_final_duration_ftp")))
+    setNames(list(d$final, d$first, d$final_ftp, d$first_ftp, d$final_duration_ftp,
+                  d$sub_final, d$sub_first, d$sub_final_ftp, d$sub_first_ftp),
+             paste0("wh_", comp, c("_final", "_first", "_final_ftp", "_first_ftp", "_final_duration_ftp",
+                                    "_sub_final", "_sub_first", "_sub_final_ftp", "_sub_first_ftp")))
   }), recursive = FALSE)
 )
 
@@ -352,7 +380,7 @@ model_specs <- c(
       mk(POLY_JOINT_FORM, paste0("blm_", sl, "_sub_first_ftp"),   blm_brms_path(paste0("model_poly_joint_sub_first_",   sl)))
     )
   }), recursive = FALSE),
-  # ---- Whisper (16 models: 8 groups × 2 components) --------------------------
+  # ---- Whisper (26 models: 13 groups × 2 components) -------------------------
   unlist(lapply(WH_COMPONENTS, function(comp) {
     list(
       # frequency
@@ -367,7 +395,17 @@ model_specs <- c(
       # polynomial joint: removed -- confirmed unused in prepare_results.R/writeup
       # (never read downstream) and 2 of the 4 were never fully fit anyway.
       # joint, controlling for "up" duration (phonetic-reduction robustness check)
-      mk(JOINT_DURATION_FORM, paste0("wh_", comp, "_final_duration_ftp"), wh_brms_path(paste0("model_joint_duration_final_", comp)))
+      mk(JOINT_DURATION_FORM, paste0("wh_", comp, "_final_duration_ftp"), wh_brms_path(paste0("model_joint_duration_final_", comp))),
+      # ---- subword condition (Experiment 2 replication) ------------------------
+      # frequency
+      mk(FREQ_FORM,       paste0("wh_", comp, "_sub_final"),     wh_brms_path(paste0("model_freq_sub_final_",   comp))),
+      mk(FREQ_FORM,       paste0("wh_", comp, "_sub_first"),     wh_brms_path(paste0("model_freq_sub_first_",   comp))),
+      # predictability
+      mk(PREDIC_FORM,     paste0("wh_", comp, "_sub_final_ftp"), wh_brms_path(paste0("model_predic_sub_final_", comp))),
+      mk(PREDIC_FORM,     paste0("wh_", comp, "_sub_first_ftp"), wh_brms_path(paste0("model_predic_sub_first_", comp))),
+      # joint
+      mk(JOINT_FORM,      paste0("wh_", comp, "_sub_final_ftp"), wh_brms_path(paste0("model_joint_sub_final_",  comp))),
+      mk(JOINT_FORM,      paste0("wh_", comp, "_sub_first_ftp"), wh_brms_path(paste0("model_joint_sub_first_",  comp)))
     )
   }), recursive = FALSE)
 )
