@@ -44,23 +44,22 @@ wasn't fully reverse-engineered (rare enough, and small enough in effect,
 that this wasn't worth further guessing). Not expected to matter in
 practice given how rare this pattern is.
 
-ASSUMPTION FLAGGED AS UNCERTAIN: the exact manifest filename/schema on the
-server's local corpus mount. up-audio-metadata.csv's own dataset_dir column
-confirms the corpus is read from local disk at /dpluth-data/GigaSpeech/data/
-and /dpluth-data/mcv/en/clips/ -- NOT via the HuggingFace `datasets` library,
-which would pull a different release/version/file-layout than whatever's
-actually on that mount (an earlier version of this script wrongly assumed
-HF `datasets`, matching the precedent in build_whisper_dataset.py for
-LibriSpeech -- that was a mistake specific to this corpus, since the real
-file's own paths point at a local mount, not an HF cache). This version
-reads GigaSpeech's native JSON manifest and Common Voice's native TSV
-manifest directly from --gigaspeech-root/--cv-root. The specific manifest
-filename (GIGASPEECH_MANIFEST_CANDIDATES / CV_MANIFEST_CANDIDATES) and field
-names within it are still a best guess at the official release format and
-haven't been verified against this specific mount -- if load_gigaspeech_
-segments()/load_common_voice_segments() can't find or parse the manifest,
-that's the part to fix; find_up_occurrences() and clean_text() (the matching
-logic) are validated separately and shouldn't need to change.
+CONFIRMED AGAINST THE ACTUAL SERVER MOUNT (manifest at
+/dpluth-data/GigaSpeech/data/GigaSpeech.json, 38,131 audio entries -- the
+full-scale release, not a small dev/test subset): a first --max-segments
+5000 test run had good precision (75%) on (sid, matched_phrase) but only
+5% cleaned_text agreement on those same matched pairs. Root cause, found by
+inspecting a raw segment directly: text_raw is empty, and text_tn is
+GigaSpeech's normalized format -- ALL CAPS with literal tag tokens standing
+in for punctuation (e.g. "...THE DOOR <COMMA> YOU SEE...") rather than real
+punctuation characters. clean_text() had no way to know about these tags,
+so they survived as garbage tokens in the cleaned output. Fixed via
+degigaspeech_text(): replaces the tag tokens with real punctuation, then
+lowercases -- matching the real file's "text" column exactly (lowercase,
+real punctuation, no truecasing on proper nouns, e.g. "new york times"
+stays lowercase there too). Re-run validate_reconstruction.py after this
+fix to confirm cleaned_text agreement jumps back up near the ~100% this
+logic gets when tested against the real file's own (untagged) text.
 
 Run this, then run validate_reconstruction.py to compare against the real
 Data/up-audio-metadata.csv and see exactly how close this gets.
@@ -138,6 +137,35 @@ GIGASPEECH_MANIFEST_CANDIDATES = [
     "metadata/GigaSpeech.json",
 ]
 
+# Confirmed directly from the manifest on the server: text_raw is empty for
+# (at least some) segments, and text_tn is GigaSpeech's normalized format --
+# ALL CAPS, with literal tag tokens standing in for punctuation (e.g.
+# "...THE DOOR <COMMA> YOU SEE..."), not real punctuation characters. The
+# real up-audio-metadata.csv's "text" column is lowercase with actual
+# punctuation and no truecasing on proper nouns (e.g. "new york times" stays
+# lowercase) -- consistent with: take text_tn, replace these tag tokens with
+# real punctuation, then lowercase the whole string. This is the standard
+# GigaSpeech tag set (COMMA/PERIOD/QUESTIONMARK/EXCLAMATIONPOINT); if other
+# tags turn up in practice, add them here.
+GIGASPEECH_TAG_MAP = {
+    "<COMMA>": ",",
+    "<PERIOD>": ".",
+    "<QUESTIONMARK>": "?",
+    "<EXCLAMATIONPOINT>": "!",
+}
+
+
+def degigaspeech_text(text_tn):
+    """Convert GigaSpeech's tagged, uppercase text_tn into natural-looking
+    lowercase text with real punctuation, matching the real file's "text"."""
+    t = text_tn
+    for tag, punct in GIGASPEECH_TAG_MAP.items():
+        t = t.replace(tag, punct)
+    t = t.lower()
+    t = re.sub(r"\s+([,.?!])", r"\1", t)  # "door , you" -> "door, you"
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 CV_MANIFEST_CANDIDATES = [
     "validated.tsv",
     "train.tsv",
@@ -162,10 +190,12 @@ def load_gigaspeech_segments(root="/dpluth-data/GigaSpeech", manifest_path=None)
     SpeechColab release format: a top-level {"audios": [...]} list, each
     entry with an "aid", a "path" relative to the release root, a
     "category" (audiobook/podcast/youtube/...), and a nested "segments"
-    list with per-segment "sid"/"begin_time"/"end_time"/"text_tn" (or
-    "text")/"speaker"). Field names are checked defensively (a few
-    plausible alternatives per field) since the exact schema on this
-    specific mount hasn't been verified against server access.
+    list with per-segment "sid"/"begin_time"/"end_time"/"text_raw"/
+    "text_tn"/"speaker" -- confirmed directly against the manifest on the
+    server). text_raw was empty in the sample checked; text_tn (run through
+    degigaspeech_text() to undo its tag-based punctuation and uppercasing)
+    is what's actually used, falling back to text_raw only if text_tn is
+    itself empty for a given segment.
     """
     import json
     import os
@@ -188,7 +218,8 @@ def load_gigaspeech_segments(root="/dpluth-data/GigaSpeech", manifest_path=None)
         category = str(audio.get("category", audio.get("source", ""))).lower()
         for seg in audio.get("segments", []):
             sid = seg.get("sid") or seg.get("segment_id")
-            text = seg.get("text_tn") or seg.get("text") or ""
+            text_tn = seg.get("text_tn", "")
+            text = degigaspeech_text(text_tn) if text_tn else seg.get("text_raw", "")
             yield {
                 "sid": sid,
                 "file": path,
