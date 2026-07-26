@@ -12,8 +12,8 @@ Reports, in order of how diagnostic they are if something's wrong:
      cleaned_text also agree exactly.
   5. Concrete mismatch examples (both directions) for debugging.
 
-Usage:
-    python validate_reconstruction.py --reconstructed Data/up-audio-metadata-reconstructed.csv
+Usage (run from Analyses/whisper/, matching build_audio_dataset.py's convention):
+    python validate_reconstruction.py --reconstructed ../../Data/up-audio-metadata-reconstructed.csv
 """
 
 import argparse
@@ -23,7 +23,9 @@ import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--real", default="Data/up-audio-metadata.csv")
+    parser.add_argument("--real", default="../../Data/up-audio-metadata.csv",
+                         help="Default assumes running from Analyses/whisper/, matching "
+                              "build_audio_dataset.py's own convention.")
     parser.add_argument("--reconstructed", required=True)
     parser.add_argument("--n-examples", type=int, default=10)
     return parser.parse_args()

@@ -65,12 +65,12 @@ logic) are validated separately and shouldn't need to change.
 Run this, then run validate_reconstruction.py to compare against the real
 Data/up-audio-metadata.csv and see exactly how close this gets.
 
-Usage:
-    python reconstruct_up_audio_metadata.py --out Data/up-audio-metadata-reconstructed.csv
+Usage (run from Analyses/whisper/, matching build_audio_dataset.py's convention):
+    python reconstruct_up_audio_metadata.py
     # if the manifest isn't found automatically:
     python reconstruct_up_audio_metadata.py --gigaspeech-manifest /path/to/GigaSpeech.json \
         --cv-manifest /path/to/validated.tsv
-    python validate_reconstruction.py --reconstructed Data/up-audio-metadata-reconstructed.csv
+    python validate_reconstruction.py --reconstructed ../../Data/up-audio-metadata-reconstructed.csv
 
 Requires:
     pip install pandas tqdm
@@ -247,7 +247,9 @@ def load_common_voice_segments(root="/dpluth-data/mcv/en", manifest_path=None):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", default="Data/up-audio-metadata-reconstructed.csv")
+    parser.add_argument("--out", default="../../Data/up-audio-metadata-reconstructed.csv",
+                         help="Default assumes running from Analyses/whisper/, matching "
+                              "build_audio_dataset.py's own convention.")
     parser.add_argument("--gigaspeech-root", default="/dpluth-data/GigaSpeech",
                          help="Local GigaSpeech release root. Default: /dpluth-data/GigaSpeech")
     parser.add_argument("--gigaspeech-manifest", default=None,
