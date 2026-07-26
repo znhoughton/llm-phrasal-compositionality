@@ -62,6 +62,11 @@ N_TRAIN         = 1000   # balanced pos+neg each for train
 N_VAL           = 1000   # balanced pos+neg each for val (matches OLMo/BabyLM)
 N_TEST_PER_TYPE = 20     # max test sentences per V+up type
 MIN_FREQ_VUP    = 5      # min occurrences to include a V+up type in test
+MIN_FREQ_UPWORD = 5      # min occurrences (in dataset_subword.csv) to include an
+                          # up-word type in train/val -- mirrors MIN_FREQ_VUP's
+                          # role for V+up types, applied here since this is where
+                          # that filter actually has effect (build_audio_dataset.py's
+                          # own copy of MIN_FREQ_VUP is diagnostic-only, not a filter)
 
 # Whisper-small encoder: Conv1d stride=2 on 10ms frames → 20ms per output token
 ENCODER_FRAME_SEC = 0.02
@@ -154,8 +159,10 @@ def load_model(model_name, device):
 def build_splits(df, subword_df=None):
     """
     subword_df: optional DataFrame from dataset_subword.csv (label="subword_up",
-    upword_type=<word>). If provided, up to N_TRAIN + N_VAL unique up-word
-    types are combined with the standalone-"up" positives for train/val only,
+    upword_type=<word>). If provided, up-word types are first restricted to
+    those with >= MIN_FREQ_UPWORD occurrences (mirroring MIN_FREQ_VUP's role
+    for V+up types below), then up to N_TRAIN + N_VAL unique qualifying types
+    are combined with the standalone-"up" positives for train/val only,
     mirroring create_train_val_test.py's design for the text models (1,000
     standalone + 1,000 unique up-within-word types). The V+up test set is
     built from df alone in either case and is completely unaffected.
@@ -195,6 +202,14 @@ def build_splits(df, subword_df=None):
     val_pos["target"]   = 1
 
     if subword_df is not None and len(subword_df) > 0:
+        upword_counts     = subword_df["upword_type"].value_counts()
+        qualifying_upword = upword_counts[upword_counts >= MIN_FREQ_UPWORD].index.tolist()
+        log.info(
+            "Qualifying up-word types (>=%d occurrences): %d / %d",
+            MIN_FREQ_UPWORD, len(qualifying_upword), len(upword_counts),
+        )
+        subword_df = subword_df[subword_df["upword_type"].isin(qualifying_upword)]
+
         # One row per unique up-word type (e.g. one "update"), mirroring
         # all_upword_pairs in create_train_val_test.py.
         subword_unique = (

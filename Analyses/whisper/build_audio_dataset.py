@@ -329,7 +329,7 @@ def extract_char_entries(align_result):
     return chars
 
 
-def find_upword_char_span(char_entries, word_ws, target_word):
+def find_upword_char_span(char_entries, word_ws, target_word, up_idx=None):
     """
     Given the flat char-level timing list for the whole utterance and the
     word-level segment for target_word (e.g. "update", start=X, end=Y),
@@ -339,9 +339,17 @@ def find_upword_char_span(char_entries, word_ws, target_word):
     [word_ws["start"], word_ws["end"]] (the word's known, reliable word-level
     span) and are in time order -- these should correspond, in order, to the
     letters of target_word. Map the string position of "up" within
-    target_word (its first occurrence) onto that same position in the
-    ordered char-entry list, rather than assuming any particular nesting of
-    WhisperX's char output.
+    target_word onto that same position in the ordered char-entry list,
+    rather than assuming any particular nesting of WhisperX's char output.
+
+    up_idx: 0-based character position of "up" within target_word. Pass the
+    phonemically-disambiguated position from
+    create_dataset.py's find_up_letter_position() (via the metadata's
+    up_char_idx column) when available -- this matters for words that spell
+    "up" more than once, where only one occurrence is actually pronounced
+    that way and CMUdict-based disambiguation identifies which. Falls back
+    to the first literal "up" substring (target.find("up")) if not given,
+    e.g. for callers without a precomputed position.
 
     Returns (up_start, up_end) or None if the char entries don't line up
     with the expected word length (e.g. alignment produced a different
@@ -361,9 +369,10 @@ def find_upword_char_span(char_entries, word_ws, target_word):
     if len(in_word) != len(target):
         return None  # alignment didn't produce one char-entry per letter; don't guess
 
-    up_idx = target.find("up")
-    if up_idx == -1:
-        return None
+    if up_idx is None:
+        up_idx = target.find("up")
+        if up_idx == -1:
+            return None
     up_chars = in_word[up_idx : up_idx + 2]
     if len(up_chars) != 2:
         return None

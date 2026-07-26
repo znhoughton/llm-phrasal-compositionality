@@ -52,13 +52,13 @@ Analyses/create_dataset.py's process for its own Dataset 2, not just the
 UPWORD_RE/UPWORD_EXCLUDE matching rule: MAX_SEGMENTS_PER_UPWORD (=50,
 mirroring MAX_SENTENCES_PER_UPWORD there) caps how many example rows get
 stored per up-word type, so a handful of very common words (e.g. "couple",
-"upon", "support") don't dominate the dataset; MIN_FREQ_UPWORD then drops
-any type with too few total occurrences across the whole corpus scan after
-collection. MIN_FREQ_UPWORD is set to 5 here, lower than the text side's 10
--- at 10, the audio corpus (much smaller than the text corpora used for
-OLMo/BabyLM) only yielded 889 qualifying types against a target of 2000 for
-a 1000/1000 train/val split, so the threshold was loosened specifically for
-this audio replication to admit more (rarer) types. Feeds into
+"upon", "support") don't dominate the dataset. Unlike the text side,
+MIN_FREQ_UPWORD is 0 here (no corpus-scan-time frequency floor), matching
+Dataset 1's own design -- the audio corpus is much smaller than the text
+corpora used for OLMo/BabyLM, and pushing the frequency floor to the
+downstream MIN_FREQ_VUP = 5 filter (build_audio_dataset.py /
+run_whisper_classifier.py) instead of filtering here maximizes the
+candidate pool available to that later, authoritative step. Feeds into
 build_subword_audio_dataset.py (matched_phrase = the up-containing word).
 
 Like Dataset 1, this is only (re)generated if its output file doesn't
@@ -83,6 +83,7 @@ Requires:
 """
 
 import argparse
+import functools
 import logging
 import os
 import re
@@ -98,19 +99,112 @@ CLEAN_RE = re.compile(r"[.,!?;:'\"‘’“”\-]")
 
 # Same rule as Analyses/create_dataset.py's Dataset 2 and
 # build_audio_dataset.py: any word containing "up" as a substring,
-# excluding the standalone word "up"/"ups" itself.
+# excluding the standalone word "up"/"ups" itself. This is a cheap
+# orthographic pre-filter only -- find_up_letter_position() below does the
+# real (phonemic) filtering for Dataset 2, since matching on the letters
+# "u"+"p" alone lets in words like "superintendent" where that substring
+# isn't pronounced anything like "up" (the "p" there follows the /u:/ of
+# "super", not /\u028c/ or /\u0259/).
 UPWORD_RE = re.compile(r"\b([a-z]*up[a-z]+|[a-z]+up[a-z]*)\b", re.IGNORECASE)
 UPWORD_EXCLUDE = {"up", "ups"}
 
+# ---------------------------------------------------------------------------
+# PRONUNCIATION FILTER (Dataset 2 only): CMUdict-based check that a
+# UPWORD_RE match is actually PRONOUNCED like "up" (/\u028cp/ or /\u0259p/) somewhere
+# in the word, not just spelled with adjacent "u"+"p" letters.
+# ---------------------------------------------------------------------------
+
+_CMU_DICT = None
+
+# Word types (lowercased) whose spelling contains "up" more than once, so
+# find_up_letter_position() had to disambiguate which occurrence is the
+# phonemically-valid one. Tracked to gauge how often this edge case
+# actually arises in practice (see main()'s Dataset 2 summary log).
+MULTI_UP_WORDS = set()
+
+
+def _get_cmu_dict():
+    global _CMU_DICT
+    if _CMU_DICT is None:
+        from nltk.corpus import cmudict
+        try:
+            _CMU_DICT = cmudict.dict()
+        except LookupError:
+            import nltk
+            nltk.download("cmudict")
+            _CMU_DICT = cmudict.dict()
+    return _CMU_DICT
+
+
+@functools.lru_cache(maxsize=None)
+def find_up_letter_position(word):
+    """
+    Return the 0-based character index in `word` of the letter "u" that
+    begins the phonemically-valid "up" occurrence, or None if `word` has
+    no CMUdict pronunciation containing the "up" sound.
+
+    "Phonemically valid" means a contiguous AH-then-P phoneme pair
+    somewhere in the pronunciation: AH is CMUdict's single vowel symbol for
+    both the stressed STRUT vowel /\u028c/ (as in "couple") and the unstressed
+    schwa /\u0259/ (as in "support") -- the stress digit, stripped here, is what
+    distinguishes them.
+
+    Words absent from CMUdict (rare/OOV) return None rather than being
+    guessed at, since we have no pronunciation to check.
+
+    Disambiguation (for words spelling "up" more than once, e.g.
+    hypothetically "upupdate"): CMUdict gives no direct phoneme-to-letter
+    alignment, so this uses a coarse heuristic -- the AH-P phoneme pair's
+    position within the phoneme sequence (index i of M total phones) is
+    mapped proportionally onto the word's letters (estimated letter index
+    i/M * len(word)), and whichever literal "up" substring occurrence is
+    closest to that estimate is returned. For the common case of a single
+    "up" occurrence, this reduces to just returning that occurrence.
+    """
+    word_lower = word.lower()
+    prons = _get_cmu_dict().get(word_lower)
+    if not prons:
+        return None
+
+    occurrences = [m.start() for m in re.finditer("up", word_lower)]
+    if not occurrences:
+        return None
+    if len(occurrences) == 1:
+        # Still confirm the word actually has the AH-P sound somewhere,
+        # even though there's nothing to disambiguate between.
+        for phones in prons:
+            stripped = [p.rstrip("012") for p in phones]
+            for i in range(len(stripped) - 1):
+                if stripped[i] == "AH" and stripped[i + 1] == "P":
+                    return occurrences[0]
+        return None
+
+    MULTI_UP_WORDS.add(word_lower)
+    best_position = None
+    best_distance = None
+    for phones in prons:
+        stripped = [p.rstrip("012") for p in phones]
+        n_phones = len(stripped)
+        for i in range(n_phones - 1):
+            if stripped[i] == "AH" and stripped[i + 1] == "P":
+                estimated = (i / n_phones) * len(word_lower)
+                for occ in occurrences:
+                    dist = abs(occ - estimated)
+                    if best_distance is None or dist < best_distance:
+                        best_distance = dist
+                        best_position = occ
+    return best_position
+
 # MAX_SEGMENTS_PER_UPWORD matches Analyses/create_dataset.py's Dataset 2
 # (MAX_SENTENCES_PER_UPWORD): cap stored example rows per up-word type so a
-# handful of very common words don't dominate. MIN_FREQ_UPWORD (drop types
-# with too few total occurrences across the whole corpus scan) is lower here
-# (5 vs. the text side's 10) -- the audio corpus is much smaller, and 10 only
-# yielded 889 qualifying types against the 2000 target for a 1000/1000
-# train/val split.
+# handful of very common words don't dominate. MIN_FREQ_UPWORD is 0 (no
+# corpus-scan-time filter) to match Dataset 1's design, which likewise
+# applies no frequency floor here -- the actual frequency floor for both
+# datasets is applied downstream (MIN_FREQ_VUP = 5 in build_audio_dataset.py
+# / run_whisper_classifier.py). Keeping this stage unfiltered maximizes the
+# candidate pool available to that later, authoritative filtering step.
 MAX_SEGMENTS_PER_UPWORD = 50
-MIN_FREQ_UPWORD = 5
+MIN_FREQ_UPWORD = 0
 
 
 def clean_text(text):
@@ -142,15 +236,25 @@ def find_up_occurrences(cleaned_text):
 
 def find_upword_occurrences(cleaned_text):
     """
-    Dataset 2: return list of (matched_word, found_count) for every
-    up-CONTAINING-word occurrence (e.g. "update", "upon", "backup") in
-    cleaned_text, excluding standalone "up"/"ups". found_count is the
-    total such occurrences in the segment.
+    Dataset 2: return list of (matched_word, found_count, up_char_idx) for
+    every up-CONTAINING-word occurrence (e.g. "update", "upon", "backup") in
+    cleaned_text, excluding standalone "up"/"ups". found_count is the total
+    such occurrences in the segment. up_char_idx is the 0-based character
+    index (within the word) of the phonemically-valid "up", from
+    find_up_letter_position() -- words whose CMUdict pronunciation doesn't
+    actually contain the "up" sound (e.g. "superintendent", spelled with
+    "up" but pronounced nothing like it) are excluded here entirely, not
+    just flagged.
     """
     words = cleaned_text.split()
-    matches = [w for w in words if w not in UPWORD_EXCLUDE and UPWORD_RE.fullmatch(w)]
+    candidates = [w for w in words if w not in UPWORD_EXCLUDE and UPWORD_RE.fullmatch(w)]
+    matches = []
+    for w in candidates:
+        up_idx = find_up_letter_position(w)
+        if up_idx is not None:
+            matches.append((w, up_idx))
     total = len(matches)
-    return [(w, total) for w in matches]
+    return [(w, total, up_idx) for w, up_idx in matches]
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +482,7 @@ def main():
                 })
 
         if need_dataset2:
-            for matched_word, found in find_upword_occurrences(cleaned):
+            for matched_word, found, up_char_idx in find_upword_occurrences(cleaned):
                 upword_freq[matched_word] = upword_freq.get(matched_word, 0) + 1
                 bucket = upword_rows.setdefault(matched_word, [])
                 if len(bucket) < MAX_SEGMENTS_PER_UPWORD:
@@ -390,6 +494,7 @@ def main():
                         "dataset_dir": seg["dataset_dir"],
                         "text": text, "cleaned_text": cleaned,
                         "matched_phrase": matched_word, "found": found,
+                        "up_char_idx": up_char_idx,
                     })
 
     n_processed = 0
@@ -422,6 +527,14 @@ def main():
             "Dataset 2: %d candidate rows, %d qualifying up-word types (freq>%d) "
             "out of %d types seen",
             len(dataset2_rows), len(qualifying_words), MIN_FREQ_UPWORD, len(upword_freq),
+        )
+        qualifying_multi_up = MULTI_UP_WORDS & qualifying_words
+        log.info(
+            "  %d/%d types seen spell \"up\" more than once (needed CMUdict-based "
+            "disambiguation of which occurrence is pronounced \"up\"); %d of those "
+            "are in the qualifying set%s",
+            len(MULTI_UP_WORDS), len(upword_freq), len(qualifying_multi_up),
+            f": {sorted(qualifying_multi_up)[:20]}" if qualifying_multi_up else "",
         )
         pd.DataFrame(dataset2_rows).to_csv(args.dataset2_out, index=False)
         log.info("Saved Dataset 2 to %s", args.dataset2_out)
