@@ -31,10 +31,22 @@ To rerun the full pipeline from scratch (GPU + infini-gram API access required),
 
 ```
 ├── Analyses/
-│   ├── Python scripts         # dataset creation, classifiers, corpus stats
-│   ├── analysis-script.Rmd   # interactive R analysis (brms + GAM)
-│   ├── run_models_parallel.R  # parallel model fitting (run before paper/)
-│   └── {olmo-3-7b,babylm,whisper}/run_pipeline.sh
+│   ├── create_dataset.py            # scan C4 → candidate up/V+up + up-subword sentences (pickles)
+│   ├── create_train_val_test.py     # tokenizer-specific train/val/test CSVs (per model)
+│   ├── up_independently.py          # standalone-up classifier (text models)
+│   ├── subwords_containing_up.py    # up-as-subword classifier (text models)
+│   ├── get_*_corpus_stats.py, export_predic_lookup.py   # Dolma/BabyLM frequency + predictability
+│   ├── analysis-script.Rmd          # interactive R analysis (brms + GAM)
+│   ├── run_models_parallel.R        # parallel model fitting (run before paper/)
+│   ├── {olmo-3-7b,babylm}/run_pipeline.sh
+│   └── whisper/
+│       ├── create_dataset.py                # scan GigaSpeech+Common Voice → candidate metadata CSVs
+│       ├── build_audio_dataset.py           # extract audio + WhisperX align (standalone up/V+up)
+│       ├── build_subword_audio_dataset.py   # same, for up-containing words (Experiment 2 replication)
+│       ├── run_whisper_classifier.py
+│       ├── validate_reconstruction.py       # QA: compare create_dataset.py's output to the real file
+│       ├── run_pipeline.sh
+│       └── unused/                          # superseded prototypes, kept for reference only
 ├── Data/
 │   ├── *.pkl                  # corpus statistics (committed)
 │   ├── ftp_lookup.csv         # predictability values (committed)
@@ -147,23 +159,44 @@ Outputs go to `Data/babylm/{opt-125m,opt-350m,opt-1.3b}/{Data_up,Data_upsubword}
 
 ## Full pipeline — Whisper-small
 
-### Step 1 — Build the audio dataset *(one-time)*
+### Step 1 — Build candidate metadata *(one-time)*
+
+```bash
+cd Analyses/whisper/
+python create_dataset.py
+# → Data/up-audio-metadata.csv           (standalone up / V+up candidates)
+# → Data/up-audio-metadata-subword.csv   (up-containing-word candidates, e.g. "update"/"upon" — Experiment 2 replication)
+```
+
+Scans GigaSpeech + Common Voice transcripts directly from a local corpus mount (not via the HuggingFace `datasets` library — see the script's docstring for why). `Data/up-audio-metadata.csv` is already committed and authoritative, so this **skips regenerating it** unless the file is missing or `--force-dataset1` is passed; `Data/up-audio-metadata-subword.csv` is new and has no existing reference file, but follows the same skip-if-exists rule (`--force-dataset2` to override). `validate_reconstruction.py` compares this script's Dataset-1 output against the real file if you do need to regenerate it (100% recall, ~98% precision at full corpus scale, in the validation run this was checked against).
+
+### Step 2 — Extract audio + align *(one-time, GPU recommended for WhisperX)*
 
 ```bash
 cd Analyses/whisper/
 python build_audio_dataset.py
 # → Data/whisper/dataset.csv
 # → Data/whisper/audio/<sid>.wav  (gitignored)
+
+# Experiment 2 replication (up-as-subword) -- only needed if extending to that experiment:
+python build_subword_audio_dataset.py --metadata ../../Data/up-audio-metadata-subword.csv
+# → Data/whisper/dataset_subword.csv
 ```
 
-Reads `Data/up-audio-metadata.csv`, extracts audio segments with ffmpeg, and runs WhisperX forced alignment.
+Extracts audio segments with ffmpeg and runs WhisperX forced alignment. `build_subword_audio_dataset.py` additionally uses character-level alignment to isolate just the "up" portion of a larger word's audio (e.g. the "up" in "update"), rather than pooling over the whole word — see its docstring for why word-level alignment alone isn't enough here.
 
-### Step 2 — Run classifiers *(GPU required)*
+### Step 3 — Run classifiers *(GPU required)*
 
 ```bash
 cd Analyses/whisper/
 bash run_pipeline.sh
-# or: python run_whisper_classifier.py --corpus-stats-pkl ../../Data/olmo_corpus_stats.pkl
+# or directly:
+python run_whisper_classifier.py --corpus-stats-pkl ../../Data/olmo_corpus_stats.pkl
+
+# Experiment 2 replication -- combines subword positives with standalone-up
+# for classifier training/validation only; the V+up test set is unchanged:
+python run_whisper_classifier.py --corpus-stats-pkl ../../Data/olmo_corpus_stats.pkl \
+    --subword-dataset ../../Data/whisper/dataset_subword.csv
 ```
 
 Extracts all 12 encoder + 12 decoder layers in a single forward pass per segment. Outputs go to `Data/whisper/{encoder,decoder}/`.
