@@ -269,8 +269,8 @@ def load_common_voice_segments(root="/dpluth-data/mcv/en", manifest_path=None):
                 "sid": row.get("sentence_id", ""),
                 "file": clip_path,
                 "segment_speaker": row.get("client_id", "N/A"),
-                "begin_time": 0.0,
-                "end_time": None,  # single-utterance clips; no sub-segment offsets
+                "begin_time": None,  # real file has these blank for CV rows -- standalone
+                "end_time": None,    # clips, not sub-segments of a longer file; confirmed directly
                 "source": "personal device",
                 "ds_source": "mozilla_common_voice",
                 "dataset_dir": os.path.join(root, "clips") + "/",
