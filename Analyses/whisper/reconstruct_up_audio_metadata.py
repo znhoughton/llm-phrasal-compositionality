@@ -236,12 +236,19 @@ def load_gigaspeech_segments(root="/dpluth-data/GigaSpeech", manifest_path=None)
 def load_common_voice_segments(root="/dpluth-data/mcv/en", manifest_path=None):
     """
     Yields dicts in the same shape as load_gigaspeech_segments(), reading
-    Common Voice's own native TSV manifest directly (columns: client_id,
-    path, sentence, ... -- the standard raw Common Voice distribution
-    format). ds_source="mozilla_common_voice", source="personal device"
-    for every row (a fixed label, not derived per-clip -- Common Voice
-    clips are all self-recorded on personal devices by design, matching
-    what's already in the real up-audio-metadata.csv).
+    Common Voice's own native TSV manifest directly. Confirmed against the
+    real up-audio-metadata.csv's own columns: "sid" is a ~64-char hex hash
+    that's too short to be client_id (which is a much longer, ~128-char
+    hash) -- it's sentence_id (a hash of the sentence text, present in
+    newer Common Voice TSV releases), not client_id+path as an earlier
+    version of this script assumed. That assumption caused a 0% precision
+    match on Common Voice specifically (209/211 = 99% on GigaSpeech, 0/66
+    on Common Voice, in a real validation run) even though the underlying
+    audio/text was presumably the same -- the sids just couldn't match
+    structurally. segment_speaker is client_id. ds_source=
+    "mozilla_common_voice", source="personal device" for every row (a fixed
+    label, not derived per-clip -- Common Voice clips are all self-recorded
+    on personal devices by design, matching what's already in the real file).
     """
     import csv
     import os
@@ -257,12 +264,11 @@ def load_common_voice_segments(root="/dpluth-data/mcv/en", manifest_path=None):
     with open(manifest_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in tqdm(reader, desc="Common Voice clips"):
-            client_id = row.get("client_id", "")
             clip_path = row.get("path", "")
             yield {
-                "sid": f"{client_id}_{clip_path}",
+                "sid": row.get("sentence_id", ""),
                 "file": clip_path,
-                "segment_speaker": "N/A",
+                "segment_speaker": row.get("client_id", "N/A"),
                 "begin_time": 0.0,
                 "end_time": None,  # single-utterance clips; no sub-segment offsets
                 "source": "personal device",
