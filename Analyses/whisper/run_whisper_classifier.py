@@ -83,9 +83,12 @@ def parse_args():
         description="Layer-by-layer Whisper encoder+decoder classifier."
     )
     parser.add_argument(
-        "--data-dir", default="../../Data/whisper_audio",
-        help="Directory containing dataset.csv and where outputs will be saved. "
-             "Default: ../../Data/whisper_audio",
+        "--data-dir", default="../../Data/whisper",
+        help="Directory containing dataset.csv. Default: ../../Data/whisper "
+             "(fixed from a stale '../../Data/whisper_audio' default that predates "
+             "this project's Data/ directory being renamed -- that path doesn't "
+             "exist and doesn't match where the real dataset.csv/encoder/decoder "
+             "results actually live).",
     )
     parser.add_argument(
         "--model", default="openai/whisper-small",
@@ -109,6 +112,18 @@ def parse_args():
              "instances for classifier training/validation only (Experiment 2 "
              "replication) -- the V+up test set is unaffected. Default: None "
              "(Experiment 1 behavior, unchanged).",
+    )
+    parser.add_argument(
+        "--out-dir", default=None,
+        help="Directory to save encoder/decoder layer results to (separate from "
+             "--data-dir, which is only read from -- dataset.csv is never written "
+             "back to). Defaults to --data-dir itself UNLESS --subword-dataset is "
+             "set, in which case it defaults to '<data-dir>_subword' instead, since "
+             "writing a subword-combined run's results into the same directory as "
+             "the primary (non-subword) results would silently overwrite them -- "
+             "the layer_XX.csv / all_layers_results.csv / layer_metadata.json files "
+             "the rest of this project's analysis already depends on. Pass this "
+             "explicitly to choose a different location.",
     )
     return parser.parse_args()
 
@@ -458,6 +473,28 @@ def evaluate_vup(clf, scaler, vup_embs_by_type, vup_counts, layer_idx, component
 def main():
     args = parse_args()
 
+    if args.out_dir is not None:
+        out_dir = args.out_dir
+    elif args.subword_dataset is not None:
+        out_dir = args.data_dir.rstrip("/\\") + "_subword"
+        log.warning(
+            "--subword-dataset set without --out-dir -- writing results to %s "
+            "instead of %s, so the primary (non-subword) layer results there are "
+            "not overwritten. Pass --out-dir explicitly to choose a different "
+            "location.", out_dir, args.data_dir,
+        )
+    else:
+        out_dir = args.data_dir
+
+    if os.path.abspath(out_dir) == os.path.abspath(args.data_dir) and args.subword_dataset is not None:
+        raise ValueError(
+            f"--out-dir resolved to the same directory as --data-dir ({args.data_dir}) "
+            "while --subword-dataset is set. Refusing to proceed: this would overwrite "
+            "the primary (non-subword) encoder/decoder layer results with the "
+            "subword-combined run's results. Pass a different --out-dir if this is "
+            "really what you want."
+        )
+
     processor, model = load_model(args.model, args.device)
     n_enc = model.config.encoder_layers   # 12 for whisper-small
     n_dec = model.config.decoder_layers   # 12 for whisper-small
@@ -558,7 +595,7 @@ def main():
         layer_train = enc_train if component == "encoder" else dec_train
         layer_val   = enc_val   if component == "encoder" else dec_val
 
-        comp_dir = os.path.join(args.data_dir, component)
+        comp_dir = os.path.join(out_dir, component)
         os.makedirs(comp_dir, exist_ok=True)
 
         all_dfs    = []

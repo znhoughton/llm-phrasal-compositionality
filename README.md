@@ -197,9 +197,13 @@ python run_whisper_classifier.py --corpus-stats-pkl ../../Data/olmo_corpus_stats
 # for classifier training/validation only; the V+up test set is unchanged:
 python run_whisper_classifier.py --corpus-stats-pkl ../../Data/olmo_corpus_stats.pkl \
     --subword-dataset ../../Data/whisper/dataset_subword.csv
+    # → Data/whisper_subword/{encoder,decoder}/ -- NOT Data/whisper/, which holds
+    #   the primary (non-subword) results the rest of the analysis depends on.
+    #   --out-dir defaults to <data-dir>_subword automatically whenever
+    #   --subword-dataset is set, specifically to avoid overwriting those.
 ```
 
-Extracts all 12 encoder + 12 decoder layers in a single forward pass per segment. Outputs go to `Data/whisper/{encoder,decoder}/`.
+Extracts all 12 encoder + 12 decoder layers in a single forward pass per segment. Outputs go to `Data/whisper/{encoder,decoder}/` for the primary run, `Data/whisper_subword/{encoder,decoder}/` for the Experiment 2 replication.
 
 ---
 
