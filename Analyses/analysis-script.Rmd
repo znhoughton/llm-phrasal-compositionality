@@ -149,6 +149,19 @@ WH_N_LAYERS    = 12
 
 whisper_final = whisper_all %>% filter(layer == WH_FINAL_LAYER)
 whisper_first = whisper_all %>% filter(layer == 0)
+
+# Subword condition (Experiment 2 replication): classifier trained with
+# subword positives ("up" within a larger word, e.g. "update") combined with
+# standalone positives (see build_splits() in run_whisper_classifier.py); the
+# test set is unchanged, so this file has the same schema as above.
+encoder_sub = load_whisper_component('../Data/whisper_subword/encoder/all_layers_results.csv', "encoder")
+decoder_sub = load_whisper_component('../Data/whisper_subword/decoder/all_layers_results.csv', "decoder")
+
+whisper_all_sub = bind_rows(encoder_sub, decoder_sub) %>%
+  mutate(component = factor(component, levels = c("encoder", "decoder")))
+
+whisper_final_sub = whisper_all_sub %>% filter(layer == WH_FINAL_LAYER)
+whisper_first_sub = whisper_all_sub %>% filter(layer == 0)
 ```
 
 ------------------------------------------------------------------------
@@ -1855,5 +1868,254 @@ lapply(WH_COMPONENTS, function(comp) {
                             paste0("Whisper: joint freq×predictability — ", comp))$heatmap)
 })
 rm(wh_bam_joint_final_models)
+gc()
+```
+
+------------------------------------------------------------------------
+
+## Whisper — Subword condition (Experiment 2 replication)
+
+Mirrors the independent-"up" analyses above exactly, with the only
+difference being that the classifier was trained with subword positives
+("up" within a larger word, e.g. "update") combined with standalone
+positives (see `build_splits()` in `run_whisper_classifier.py`). The test
+set (V+up instances) is unchanged.
+
+### Effect of frequency at the final layer — subword condition (brms)
+
+```{r whisper-sub-brms-freq-final}
+wh_sub_freq_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ log_freq + (1 | verb_up),
+    data    = whisper_final_sub %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_freq_sub_final_", comp))
+  )
+})
+lapply(wh_sub_freq_final_models, summary)
+```
+
+### Effect of frequency at the first layer — subword condition (brms)
+
+```{r whisper-sub-brms-freq-first}
+wh_sub_freq_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ log_freq + (1 | verb_up),
+    data    = whisper_first_sub %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_freq_sub_first_", comp))
+  )
+})
+lapply(wh_sub_freq_first_models, summary)
+```
+
+### Effect of frequency at the final layer — subword condition (bam — non-linear)
+
+```{r whisper-sub-bam-freq-final}
+set.seed(964)
+wh_sub_bam_freq_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("bam_freq_sub_final_", comp), function() {
+    bam(logit ~ s(log_freq) + s(verb_up, bs = 're'),
+        data = whisper_final_sub %>% filter(component == comp), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(wh_sub_bam_freq_final_models, summary)
+```
+
+### Effect of frequency across all layers — subword condition (mgcv)
+
+```{r whisper-sub-bam-freq-layer}
+set.seed(964)
+wh_sub_freq_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("model_freq_layer_sub_", comp), function() {
+    bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+        data = whisper_all_sub %>% filter(component == comp), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(wh_sub_freq_layer_models, summary)
+```
+
+### Whisper frequency plots — subword condition
+
+```{r whisper-sub-plot-freq}
+wrap_plots(lapply(WH_COMPONENTS, function(comp) {
+  plot_final_layer(wh_sub_freq_final_models[[comp]],
+                   whisper_final_sub %>% filter(component == comp),
+                   paste0("Whisper (subword): freq at final layer — ", comp))
+}))
+
+lapply(WH_COMPONENTS, function(comp) {
+  plots = plot_freq_by_layer_mgcv(wh_sub_freq_layer_models[[comp]],
+                                   whisper_all_sub %>% filter(component == comp),
+                                   paste0("Whisper (subword) — ", comp),
+                                   n_layers = WH_N_LAYERS)
+  print(plots$spaghetti); print(plots$diff)
+})
+rm(wh_sub_freq_final_models, wh_sub_freq_first_models, wh_sub_bam_freq_final_models,
+   wh_sub_freq_layer_models)
+gc()
+```
+
+------------------------------------------------------------------------
+
+### Whisper — Subword condition — Predictability
+
+```{r whisper-sub-ftp-subsets}
+whisper_final_ftp_sub = whisper_final_sub %>% filter(!is.na(log_predic)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+whisper_first_ftp_sub = whisper_first_sub %>% filter(!is.na(log_predic)) %>%
+  group_by(component) %>%
+  mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
+whisper_ftp_sub       = whisper_all_sub   %>% filter(!is.na(log_predic))
+```
+
+#### Predictability at the final layer — subword condition (brms)
+
+```{r whisper-sub-brms-ftp-final}
+wh_sub_predic_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ log_predic + (1 | verb_up),
+    data    = whisper_final_ftp_sub %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_predic_sub_final_", comp))
+  )
+})
+lapply(wh_sub_predic_final_models, summary)
+```
+
+#### Predictability at the first layer — subword condition (brms)
+
+```{r whisper-sub-brms-ftp-first}
+wh_sub_predic_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ log_predic + (1 | verb_up),
+    data    = whisper_first_ftp_sub %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_predic_sub_first_", comp))
+  )
+})
+lapply(wh_sub_predic_first_models, summary)
+```
+
+#### Predictability at the final layer — subword condition (bam — non-linear)
+
+```{r whisper-sub-bam-ftp-final}
+set.seed(964)
+wh_sub_bam_predic_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("bam_predic_sub_final_", comp), function() {
+    bam(logit ~ s(log_predic) + s(verb_up, bs = 're'),
+        data = whisper_final_ftp_sub %>% filter(component == comp), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(wh_sub_bam_predic_final_models, summary)
+rm(wh_sub_predic_final_models, wh_sub_predic_first_models, wh_sub_bam_predic_final_models)
+gc()
+```
+
+#### Predictability × layer — subword condition (mgcv)
+
+```{r whisper-sub-bam-ftp-layer}
+set.seed(964)
+wh_sub_predic_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("model_predic_layer_sub_", comp), function() {
+    bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
+        data = whisper_ftp_sub %>% filter(component == comp), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(wh_sub_predic_layer_models, summary)
+```
+
+#### Predictability plots — subword condition
+
+```{r whisper-sub-ftp-plots}
+lapply(WH_COMPONENTS, function(comp) {
+  plots = plot_ftp_by_layer_mgcv(wh_sub_predic_layer_models[[comp]],
+                                  whisper_ftp_sub %>% filter(component == comp),
+                                  paste0("Whisper (subword) — ", comp),
+                                  n_layers = WH_N_LAYERS)
+  print(plots$spaghetti); print(plots$diff)
+})
+rm(wh_sub_predic_layer_models)
+gc()
+```
+
+------------------------------------------------------------------------
+
+### Whisper — Subword condition — Joint frequency + predictability
+
+#### Additive freq + predictability at the final layer — subword condition (brms)
+
+```{r whisper-sub-brms-joint}
+wh_sub_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
+    data    = whisper_final_ftp_sub %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_joint_sub_final_", comp))
+  )
+})
+lapply(wh_sub_joint_final_models, summary)
+```
+
+#### Additive freq + predictability at the first layer — subword condition (brms)
+
+```{r whisper-sub-brms-joint-first}
+wh_sub_joint_first_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  brm(
+    formula = logit ~ c_log_freq * c_log_predic + (1 | verb_up),
+    data    = whisper_first_ftp_sub %>% filter(component == comp),
+    prior   = priors,
+    iter = 6000, warmup = 3000, chains = 4, cores = 4, seed = 964,
+    file    = wh_brms_path(paste0("model_joint_sub_first_", comp))
+  )
+})
+lapply(wh_sub_joint_first_models, summary)
+rm(wh_sub_joint_final_models, wh_sub_joint_first_models)
+gc()
+```
+
+#### Joint freq × predictability surface at final layer — subword condition (bam)
+
+```{r whisper-sub-bam-joint}
+set.seed(964)
+wh_sub_bam_joint_final_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("bam_joint_sub_final_", comp), function() {
+    bam(logit ~ te(log_freq, log_predic) + s(verb_up, bs = 're'),
+        data = whisper_final_ftp_sub %>% filter(component == comp), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(wh_sub_bam_joint_final_models, summary)
+```
+
+#### Freq and predictability effects across layers — subword condition (additive bam)
+
+```{r whisper-sub-bam-freq-ftp-layer}
+set.seed(964)
+wh_sub_freq_predic_layer_models = lapply(setNames(WH_COMPONENTS, WH_COMPONENTS), function(comp) {
+  wh_cache_bam(paste0("model_freq_predic_layer_sub_", comp), function() {
+    bam(logit ~ te(log_freq, layer) + te(log_predic, layer) + s(verb_up, bs = 're'),
+        data = whisper_ftp_sub %>% filter(component == comp), method = 'fREML', discrete = TRUE)
+  })
+})
+lapply(wh_sub_freq_predic_layer_models, summary)
+rm(wh_sub_freq_predic_layer_models)
+gc()
+```
+
+#### Joint surface plots — subword condition, final layer
+
+```{r whisper-sub-plot-joint}
+lapply(WH_COMPONENTS, function(comp) {
+  print(plot_joint_surface(wh_sub_bam_joint_final_models[[comp]],
+                            whisper_final_ftp_sub %>% filter(component == comp),
+                            paste0("Whisper (subword): joint freq×predictability — ", comp))$heatmap)
+})
+rm(wh_sub_bam_joint_final_models)
 gc()
 ```
