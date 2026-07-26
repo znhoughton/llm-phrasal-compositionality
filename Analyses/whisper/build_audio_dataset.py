@@ -13,6 +13,21 @@ a VERB → "vup", else → "word_up".
 For train/val: use "word_up" rows (mirrors OLMo/BabyLM standalone_up design)
 For test:      use "vup" rows (V+up types with >= MIN_FREQ_VUP occurrences)
 
+Experiment 2 replication (--subword-metadata): a second, optional metadata
+CSV of segments containing an "up"-within-word match (e.g. "update", "upon"),
+found via the same UPWORD_RE/UPWORD_EXCLUDE criteria used for the text
+experiments (see Analyses/create_dataset.py). Unlike "up"/"vup", these words
+are not themselves "up", so word-level alignment alone isn't enough to
+isolate the "up" portion of the word's pronunciation -- character-level
+alignment (return_char_alignments=True) is used to find the specific
+character span of "up" within the matched word, and only that narrower span
+is used for up_start/up_end. This mirrors the text experiments' approach of
+extracting the specific BPE token containing "up" as a substring, rather
+than the whole word's representation. Rows from this file are labeled
+"subword_up" and carry an additional upword_type column (e.g. "update") used
+downstream to restrict training/validation to one instance per unique word
+type (see build_splits() in run_whisper_classifier.py).
+
 Output:
     OUT_DIR/dataset.csv
     OUT_DIR/audio/<sid>.wav   (16 kHz mono .wav for each extracted segment)
@@ -26,8 +41,9 @@ Columns in dataset.csv:
     neg_start      : start time of the negative word
     neg_end        : end time of the negative word
     neg_word       : text of the negative word
-    label          : "vup" or "word_up"
-    verb_up        : V+up type (e.g. "pick up"), or "" for word_up
+    label          : "vup", "word_up", or "subword_up"
+    verb_up        : V+up type (e.g. "pick up"), or "" for word_up/subword_up
+    upword_type    : up-containing word (e.g. "update"), or "" for vup/word_up
     transcript     : cleaned_text for the segment
 
 Speed
@@ -82,6 +98,14 @@ import whisperx
 # ---------------------------------------------------------------------------
 MIN_FREQ_VUP = 5
 RANDOM_SEED  = 964
+
+# Same matching rule as Analyses/create_dataset.py's Dataset 2 ("up within
+# words"): any word containing "up" as a substring, excluding the standalone
+# word "up"/"ups" itself. Kept identical across text and audio so the two
+# experiments define "up-as-subword" the same way.
+import re as _re
+UPWORD_RE      = _re.compile(r'\b([a-z]*up[a-z]+|[a-z]+up[a-z]*)\b', _re.IGNORECASE)
+UPWORD_EXCLUDE = {"up", "ups"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
@@ -209,22 +233,28 @@ def extract_segment(audio_file, begin_time, end_time, out_wav):
 # WHISPERX: word-level alignment (single utterance)
 # ---------------------------------------------------------------------------
 
-def align_utterance(audio_array, transcript, align_model, wx_metadata, device):
+def align_utterance(audio_array, transcript, align_model, wx_metadata, device,
+                     return_char_alignments=False):
     """
     Run WhisperX forced alignment on a single utterance in isolation.
-    Returns list of word segments [{word, start, end}, ...] or None.
+    Returns list of word segments [{word, start, end}, ...], or
+    (word_segments, char_entries) if return_char_alignments=True, or None
+    (or (None, None)) on failure.
     """
     try:
         duration = len(audio_array) / 16000.0
         segments = [{"text": transcript, "start": 0.0, "end": duration}]
         result = whisperx.align(
             segments, align_model, wx_metadata, audio_array, device,
-            return_char_alignments=False,
+            return_char_alignments=return_char_alignments,
         )
-        return result.get("word_segments", [])
+        word_segs = result.get("word_segments", [])
+        if return_char_alignments:
+            return word_segs, extract_char_entries(result)
+        return word_segs
     except Exception as e:
         log.debug("Alignment failed: %s", e)
-        return None
+        return (None, None) if return_char_alignments else None
 
 
 def find_up_timestamps(word_segments):
@@ -236,20 +266,108 @@ def find_up_timestamps(word_segments):
     ]
 
 
-def sample_negative(word_segments):
+def sample_negative(word_segments, exclude_upword=False):
     """
     Pick a random non-'up' word with valid timestamps (>= 20 ms duration).
     Restricted to purely alphabetic words (word.isalpha()), mirroring the
     token.isalpha() criterion used for negatives in the OLMo/BabyLM pipeline.
+
+    exclude_upword=True additionally excludes any word containing "up" as a
+    substring (not just the exact word "up") -- used for subword_up rows so
+    a negative isn't accidentally drawn from a second up-containing word in
+    the same sentence, mirroring exclude_subword_up in create_train_val_test.py.
     """
-    candidates = [
-        ws for ws in word_segments
-        if ws.get("word", "").lower().strip(".,!?;:\"'") != "up"
-        and "start" in ws and "end" in ws
-        and ws["end"] - ws["start"] >= 0.02
-        and ws.get("word", "").isalpha()
-    ]
+    candidates = []
+    for ws in word_segments:
+        w = ws.get("word", "").lower().strip(".,!?;:\"'")
+        if w == "up":
+            continue
+        if exclude_upword and UPWORD_RE.search(w):
+            continue
+        if "start" not in ws or "end" not in ws:
+            continue
+        if ws["end"] - ws["start"] < 0.02:
+            continue
+        if not w.isalpha():
+            continue
+        candidates.append(ws)
     return random.choice(candidates) if candidates else None
+
+
+# ---------------------------------------------------------------------------
+# SUBWORD "UP": character-level alignment to isolate "up" within a larger word
+# ---------------------------------------------------------------------------
+
+def find_word_segment(word_segments, target_word):
+    """Return the first word segment matching target_word (case-insensitive,
+    punctuation-stripped), with valid start/end timestamps."""
+    target = target_word.lower().strip()
+    for ws in word_segments:
+        w = ws.get("word", "").lower().strip(".,!?;:\"'")
+        if w == target and "start" in ws and "end" in ws:
+            return ws
+    return None
+
+
+def extract_char_entries(align_result):
+    """
+    Return a flat, time-ordered list of {"char": c, "start": t0, "end": t1}
+    from a whisperx.align() result with return_char_alignments=True.
+
+    WhisperX's char-level output has changed shape across versions (a flat
+    "char_segments" list at the top level in some versions, nested under
+    result["segments"][i]["chars"] in others). This checks both rather than
+    assuming one -- if neither is present, callers should treat this as "no
+    char alignment available" and fall back to skipping the row, not to
+    guessing.
+    """
+    if "char_segments" in align_result and align_result["char_segments"]:
+        return align_result["char_segments"]
+    chars = []
+    for seg in align_result.get("segments", []):
+        chars.extend(seg.get("chars", []))
+    return chars
+
+
+def find_upword_char_span(char_entries, word_ws, target_word):
+    """
+    Given the flat char-level timing list for the whole utterance and the
+    word-level segment for target_word (e.g. "update", start=X, end=Y),
+    find the start/end time of the "up" substring within that word.
+
+    Approach: take the char entries whose own timestamps fall inside
+    [word_ws["start"], word_ws["end"]] (the word's known, reliable word-level
+    span) and are in time order -- these should correspond, in order, to the
+    letters of target_word. Map the string position of "up" within
+    target_word (its first occurrence) onto that same position in the
+    ordered char-entry list, rather than assuming any particular nesting of
+    WhisperX's char output.
+
+    Returns (up_start, up_end) or None if the char entries don't line up
+    with the expected word length (e.g. alignment produced a different
+    number of characters than the word has letters -- in which case we
+    don't guess, we just skip the row).
+    """
+    w_start, w_end = word_ws["start"], word_ws["end"]
+    in_word = [
+        c for c in char_entries
+        if "start" in c and "end" in c
+        and c["start"] >= w_start - 1e-6 and c["end"] <= w_end + 1e-6
+        and c.get("char", "").strip()  # drop space/blank entries
+    ]
+    in_word.sort(key=lambda c: c["start"])
+
+    target = target_word.lower().strip()
+    if len(in_word) != len(target):
+        return None  # alignment didn't produce one char-entry per letter; don't guess
+
+    up_idx = target.find("up")
+    if up_idx == -1:
+        return None
+    up_chars = in_word[up_idx : up_idx + 2]
+    if len(up_chars) != 2:
+        return None
+    return (up_chars[0]["start"], up_chars[-1]["end"])
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +383,9 @@ def _alignment_worker(items_chunk, device):
     Entry point for each spawned worker process.
 
     Loads the alignment model once, then processes each segment in the chunk
-    independently.  Returns list of (orig_idx, word_segments_or_None).
+    independently.  Returns list of (orig_idx, word_segments_or_None) for
+    ordinary rows, or (orig_idx, (word_segments, char_entries)) for rows with
+    c["need_char_alignment"] set (subword_up candidates).
     """
     import whisperx as _wx
     import soundfile as _sf
@@ -275,21 +395,26 @@ def _alignment_worker(items_chunk, device):
 
     results = []
     for orig_idx, c in items_chunk:
+        need_chars = c.get("need_char_alignment", False)
         try:
             audio, sr = _sf.read(c["wav_path"])
             if sr != 16000:
-                results.append((orig_idx, None))
+                results.append((orig_idx, (None, None) if need_chars else None))
                 continue
             audio    = audio.astype(_np.float32)
             duration = len(audio) / 16000.0
             segs     = [{"text": c["transcript"], "start": 0.0, "end": duration}]
             out      = _wx.align(
                 segs, align_model, wx_meta, audio, device,
-                return_char_alignments=False,
+                return_char_alignments=need_chars,
             )
-            results.append((orig_idx, out.get("word_segments", [])))
+            word_segs = out.get("word_segments", [])
+            if need_chars:
+                results.append((orig_idx, (word_segs, extract_char_entries(out))))
+            else:
+                results.append((orig_idx, word_segs))
         except Exception:
-            results.append((orig_idx, None))
+            results.append((orig_idx, (None, None) if need_chars else None))
 
     return results
 
