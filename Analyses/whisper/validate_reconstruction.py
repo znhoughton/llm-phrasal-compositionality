@@ -1,5 +1,5 @@
 """
-Validate reconstruct_up_audio_metadata.py's output against the real
+Validate create_dataset.py's Dataset 1 output against the real
 Data/up-audio-metadata.csv.
 
 Reports, in order of how diagnostic they are if something's wrong:
