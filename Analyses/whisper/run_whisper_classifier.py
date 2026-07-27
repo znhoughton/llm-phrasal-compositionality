@@ -335,10 +335,15 @@ def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
         enc[layer_idx] : list of np.ndarray  (one per row, or None if skipped)
         dec[layer_idx] : list of np.ndarray  (one per row, or None if skipped)
         targets        : list of int labels (from df["target"] if present, else 1)
+        sources        : list of str, df["label"] if present else "" -- lets
+            callers separate subword_up rows from standalone rows (e.g. to
+            report validation accuracy on the subword condition specifically,
+            not just combined with standalone -- see train_classifier()).
     """
     enc  = [[] for _ in range(n_enc)]
     dec  = [[] for _ in range(n_dec)]
     targets = []
+    sources = []
     up_ids           = find_word_token_ids(processor, "up")
     neg_word_id_cache = {}   # word string -> set of token ids
 
@@ -414,6 +419,7 @@ def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
                     dec[li].append(emb)
 
             targets.append(int(row["target"]) if "target" in row else 1)
+            sources.append(str(row.get("label", "")))
 
         except Exception as e:
             log.debug("Skipped: %s", e)
@@ -422,28 +428,41 @@ def extract_all_layers(df, processor, model, device, n_enc, n_dec, desc=""):
             for li in range(n_dec):
                 dec[li].append(None)
             targets.append(int(row["target"]) if "target" in row else 1)
+            sources.append(str(row.get("label", "")))
 
-    return enc, dec, targets
+    return enc, dec, targets, sources
 
 
-def layer_arrays(layer_embs, targets):
-    """Filter out None entries, return (X, y) numpy arrays."""
-    X, y = [], []
-    for emb, lbl in zip(layer_embs, targets):
+def layer_arrays(layer_embs, targets, sources=None):
+    """Filter out None entries, return (X, y) numpy arrays, or (X, y, src) if
+    sources is given (see extract_all_layers() for what sources holds)."""
+    X, y, src = [], [], []
+    for i, (emb, lbl) in enumerate(zip(layer_embs, targets)):
         if emb is not None:
             X.append(emb)
             y.append(lbl)
+            if sources is not None:
+                src.append(sources[i])
     if not X:
-        return np.zeros((0, 1)), np.zeros(0, dtype=int)
-    return np.vstack(X), np.array(y)
+        X_arr, y_arr = np.zeros((0, 1)), np.zeros(0, dtype=int)
+        return (X_arr, y_arr, np.array([], dtype=object)) if sources is not None else (X_arr, y_arr)
+    X_arr, y_arr = np.vstack(X), np.array(y)
+    return (X_arr, y_arr, np.array(src, dtype=object)) if sources is not None else (X_arr, y_arr)
 
 
 # ---------------------------------------------------------------------------
 # CLASSIFIER
 # ---------------------------------------------------------------------------
 
-def train_classifier(X_train, y_train, X_val, y_val):
-    """Logistic regression with class balancing by majority truncation."""
+def train_classifier(X_train, y_train, X_val, y_val, src_val=None):
+    """Logistic regression with class balancing by majority truncation.
+
+    src_val: optional array (from layer_arrays' sources output) aligned with
+    X_val/y_val, giving each row's original df["label"]. If provided, and any
+    validation positives are labelled "subword_up", also reports validation
+    accuracy restricted to those rows -- the subword condition specifically,
+    not blended in with standalone-up validation performance.
+    """
     pos_tr = np.where(y_train == 1)[0]
     neg_tr = np.where(y_train == 0)[0]
     n_tr   = min(len(pos_tr), len(neg_tr))
@@ -455,6 +474,7 @@ def train_classifier(X_train, y_train, X_val, y_val):
     n_va   = min(len(pos_va), len(neg_va))
     idx_va = np.concatenate([pos_va[:n_va], neg_va[:n_va]])
     X_va, y_va = X_val[idx_va], y_val[idx_va]
+    src_va = src_val[idx_va] if src_val is not None else None
 
     scaler   = StandardScaler()
     X_tr_sc  = scaler.fit_transform(X_tr)
@@ -469,13 +489,22 @@ def train_classifier(X_train, y_train, X_val, y_val):
     up_acc    = (val_preds[y_va == 1] == 1).mean() if (y_va == 1).any() else float("nan")
     oth_acc   = (val_preds[y_va == 0] == 0).mean() if (y_va == 0).any() else float("nan")
 
+    subword_acc = float("nan")
+    n_subword_va = 0
+    if src_va is not None:
+        is_sub_pos = (y_va == 1) & (src_va == "subword_up")
+        n_subword_va = int(is_sub_pos.sum())
+        if n_subword_va > 0:
+            subword_acc = (val_preds[is_sub_pos] == 1).mean()
+
     log.info(
-        "  CV: %.3f±%.3f | Val: %.3f (up=%.3f, other=%.3f)",
-        cv.mean(), cv.std(), val_acc, up_acc, oth_acc,
+        "  CV: %.3f±%.3f | Val: %.3f (up=%.3f, other=%.3f, subword=%.3f n=%d)",
+        cv.mean(), cv.std(), val_acc, up_acc, oth_acc, subword_acc, n_subword_va,
     )
     return clf, scaler, {
         "cv_mean": float(cv.mean()), "cv_std": float(cv.std()),
         "val_acc": float(val_acc),   "up_acc": float(up_acc),   "other_acc": float(oth_acc),
+        "subword_acc": float(subword_acc), "n_subword_va": n_subword_va,
         "n_train_pos": int(n_tr), "n_train_neg": int(n_tr),
         "n_val_pos":   int(n_va), "n_val_neg":   int(n_va),
     }
@@ -587,12 +616,12 @@ def main():
     # Extract embeddings for train, val, test in one pass each
     # ----------------------------------------------------------------
     log.info("Extracting train embeddings ...")
-    enc_train, dec_train, y_train = extract_all_layers(
+    enc_train, dec_train, y_train, src_train = extract_all_layers(
         train_df, processor, model, args.device, n_enc, n_dec, desc="Train"
     )
 
     log.info("Extracting val embeddings ...")
-    enc_val, dec_val, y_val = extract_all_layers(
+    enc_val, dec_val, y_val, src_val = extract_all_layers(
         val_df, processor, model, args.device, n_enc, n_dec, desc="Val"
     )
 
@@ -603,7 +632,7 @@ def main():
 
     for vt in qualifying:
         rows = test_df[test_df.verb_up == vt]
-        enc_t, dec_t, _ = extract_all_layers(
+        enc_t, dec_t, _, _ = extract_all_layers(
             rows, processor, model, args.device, n_enc, n_dec,
             desc=f"Test {vt}",
         )
@@ -652,13 +681,13 @@ def main():
             log.info("--- %s layer %d / %d ---", component.upper(), li, n_layers - 1)
 
             X_tr, y_tr = layer_arrays(layer_train[li], y_train)
-            X_va, y_va = layer_arrays(layer_val[li],   y_val)
+            X_va, y_va, src_va = layer_arrays(layer_val[li], y_val, src_val)
 
             if len(X_tr) == 0:
                 log.warning("No valid embeddings at %s layer %d — skipping", component, li)
                 continue
 
-            clf, scaler, metrics = train_classifier(X_tr, y_tr, X_va, y_va)
+            clf, scaler, metrics = train_classifier(X_tr, y_tr, X_va, y_va, src_val=src_va)
 
             layer_meta.append({
                 "layer":            li,
@@ -672,6 +701,8 @@ def main():
                 "val_acc":          round(metrics["val_acc"],   6),
                 "val_up_acc":       round(metrics["up_acc"],    6),
                 "val_other_acc":    round(metrics["other_acc"], 6),
+                "val_subword_acc":  round(metrics["subword_acc"], 6) if metrics["n_subword_va"] > 0 else None,
+                "val_subword_n":    metrics["n_subword_va"],
             })
 
             layer_df = evaluate_vup(
