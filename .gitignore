@@ -16,3 +16,6 @@ paper/
 **/.ipynb_checkpoints/
 Analyses/analysis-script.html
 **/all_layers_results.csv
+# Whisper's are small enough (~13MB) to track normally, unlike OLMo/BabyLM's
+!Data/whisper/**/all_layers_results.csv
+!Data/whisper_subword/**/all_layers_results.csv
