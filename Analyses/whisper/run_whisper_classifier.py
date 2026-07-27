@@ -634,6 +634,20 @@ def main():
         val_df, processor, model, args.device, n_enc, n_dec, desc="Val"
     )
 
+    # Re-save train/val with per-component survival flags now that extraction
+    # has run: a row can succeed for the encoder (pooled over audio frames,
+    # rarely fails) but fail for the decoder (no token cleanly containing
+    # "up" in this row's tokenization), or vice versa -- see
+    # extract_all_layers()'s docstring. All decoder layers share the same
+    # target position per row (found once, reused for every layer), so
+    # checking layer 0 is sufficient to know whether every layer succeeded.
+    train_df["encoder_survived"] = [e is not None for e in enc_train[0]]
+    train_df["decoder_survived"] = [e is not None for e in dec_train[0]]
+    val_df["encoder_survived"]   = [e is not None for e in enc_val[0]]
+    val_df["decoder_survived"]   = [e is not None for e in dec_val[0]]
+    train_df.to_csv(os.path.join(out_dir, "train.csv"), index=False)
+    val_df.to_csv(  os.path.join(out_dir, "val.csv"),   index=False)
+
     # Test: grouped by V+up type, keep as list of (embs_enc, embs_dec) per type
     log.info("Extracting test (V+up) embeddings ...")
     test_enc_by_type = {vt: [] for vt in qualifying}
