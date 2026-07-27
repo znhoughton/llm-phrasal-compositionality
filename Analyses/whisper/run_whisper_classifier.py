@@ -594,6 +594,15 @@ def main():
 
     train_df, val_df, test_df, qualifying, vup_counts = build_splits(df, subword_df=subword_df)
 
+    # Save train/val/test splits (mirrors create_train_val_test.py's convention
+    # for OLMo/BabyLM), so downstream analyses can recover exactly which rows
+    # -- and which up-word types -- fed the classifier, without needing to
+    # reconstruct the split from scratch.
+    os.makedirs(out_dir, exist_ok=True)
+    train_df.to_csv(os.path.join(out_dir, "train.csv"), index=False)
+    val_df.to_csv(  os.path.join(out_dir, "val.csv"),   index=False)
+    test_df.to_csv( os.path.join(out_dir, "test.csv"),  index=False)
+
     # Use Dolma corpus frequencies if a pkl is provided; fall back to audio occurrence counts
     if args.corpus_stats_pkl:
         with open(args.corpus_stats_pkl, "rb") as f:
