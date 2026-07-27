@@ -67,6 +67,17 @@ MIN_FREQ_UPWORD = 5      # min occurrences (in dataset_subword.csv) to include a
                           # role for V+up types, applied here since this is where
                           # that filter actually has effect (build_audio_dataset.py's
                           # own copy of MIN_FREQ_VUP is diagnostic-only, not a filter)
+MAX_INSTANCES_PER_UPWORD_TYPE = 5  # max instances sampled per up-word type for
+                          # train/val (audio only -- the text-side design in
+                          # create_train_val_test.py uses exactly 1, which is
+                          # fine there because ~8,662 qualifying types are
+                          # available; the audio corpus only yields a few
+                          # hundred, so capping at exactly 1 each produced an
+                          # unworkably small training set. Set equal to
+                          # MIN_FREQ_UPWORD so every qualifying type can supply
+                          # the full cap without shortfall. Still caps any
+                          # single frequent type from dominating the training
+                          # signal -- just a looser cap than 1.
 
 # Whisper-small encoder: Conv1d stride=2 on 10ms frames → 20ms per output token
 ENCODER_FRAME_SEC = 0.02
@@ -210,38 +221,55 @@ def build_splits(df, subword_df=None):
         )
         subword_df = subword_df[subword_df["upword_type"].isin(qualifying_upword)]
 
-        # One row per unique up-word type (e.g. one "update"), mirroring
-        # all_upword_pairs in create_train_val_test.py.
-        subword_unique = (
-            subword_df.groupby("upword_type", group_keys=False)
-            .apply(lambda g: g.sample(n=1, random_state=RANDOM_SEED))
-            .sample(frac=1, random_state=RANDOM_SEED)
-            .reset_index(drop=True)
-        )
-        log.info("Unique up-word types available: %d", len(subword_unique))
-        if len(subword_unique) < N_TRAIN + N_VAL:
+        # Split TYPES (not rows) into train/val first, so the same up-word type
+        # never appears in both -- otherwise the classifier could be validated
+        # on a type it already saw (different audio instance, same word) during
+        # training, inflating validation accuracy as an estimate of general
+        # "up"-within-word recognition rather than type generalization.
+        rng = np.random.RandomState(RANDOM_SEED)
+        shuffled_types = list(rng.permutation(qualifying_upword))
+        n_types = len(shuffled_types)
+        log.info("Unique up-word types available: %d", n_types)
+        if n_types < N_TRAIN + N_VAL:
             log.warning(
                 "Fewer unique up-word types (%d) than N_TRAIN+N_VAL (%d); "
                 "using all available, split proportionally.",
-                len(subword_unique), N_TRAIN + N_VAL,
+                n_types, N_TRAIN + N_VAL,
             )
-            n_sub_train = int(len(subword_unique) * N_TRAIN / (N_TRAIN + N_VAL))
+            n_train_types = int(n_types * N_TRAIN / (N_TRAIN + N_VAL))
         else:
-            n_sub_train = N_TRAIN
-            subword_unique = subword_unique.iloc[: N_TRAIN + N_VAL]
+            n_train_types = N_TRAIN
+            shuffled_types = shuffled_types[: N_TRAIN + N_VAL]
+            n_types = len(shuffled_types)
 
-        subword_train = subword_unique.iloc[:n_sub_train].copy()
-        subword_val   = subword_unique.iloc[n_sub_train:].copy()
+        train_types = set(shuffled_types[:n_train_types])
+        val_types   = set(shuffled_types[n_train_types:n_types])
+
+        def sample_upword_instances(types):
+            # Up to MAX_INSTANCES_PER_UPWORD_TYPE instances per type, not just
+            # 1 -- see MAX_INSTANCES_PER_UPWORD_TYPE's own comment for why.
+            return (
+                subword_df[subword_df["upword_type"].isin(types)]
+                .groupby("upword_type", group_keys=False)
+                .apply(lambda g: g.sample(
+                    n=min(len(g), MAX_INSTANCES_PER_UPWORD_TYPE), random_state=RANDOM_SEED
+                ))
+                .sample(frac=1, random_state=RANDOM_SEED)
+                .reset_index(drop=True)
+            )
+
+        subword_train = sample_upword_instances(train_types)
+        subword_val   = sample_upword_instances(val_types)
         subword_train["target"] = 1
         subword_val["target"]   = 1
 
         train_pos = pd.concat([train_pos, subword_train], ignore_index=True)
         val_pos   = pd.concat([val_pos, subword_val], ignore_index=True)
         log.info(
-            "Combined positives — Train: %d (%d standalone + %d subword) | "
-            "Val: %d (%d standalone + %d subword)",
-            len(train_pos), N_TRAIN, len(subword_train),
-            len(val_pos), N_VAL, len(subword_val),
+            "Combined positives — Train: %d (%d standalone + %d subword from %d types) | "
+            "Val: %d (%d standalone + %d subword from %d types)",
+            len(train_pos), N_TRAIN, len(subword_train), len(train_types),
+            len(val_pos), N_VAL, len(subword_val), len(val_types),
         )
 
     def make_neg(rows):
