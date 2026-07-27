@@ -9,8 +9,11 @@
 #   install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
 #   cmdstanr::install_cmdstan()
 #
-# Hardware: 24 cores assumed — 6 parallel models × 4 chains each.
-# Adjust N_WORKERS below if your core count differs.
+# Hardware: adjust N_WORKERS below to your core count. Default here is 1
+# (fully sequential -- one model at a time, using 4 chains/4 cores for that
+# model only) for running locally without a cluster. Raise it if you have
+# enough cores to fit multiple models at once (e.g. 6 workers x 4 chains =
+# 24 cores).
 
 suppressPackageStartupMessages({
   library(tidyverse)
@@ -22,7 +25,7 @@ suppressPackageStartupMessages({
 if (!requireNamespace("cmdstanr", quietly = TRUE))
   stop("cmdstanr not found. Install with:\n  install.packages('cmdstanr', repos = c('https://mc-stan.org/r-packages/', getOption('repos')))\n  cmdstanr::install_cmdstan()")
 
-N_WORKERS <- 6L  # 6 models × 4 chains = 24 cores
+N_WORKERS <- 1L  # sequential: one model at a time (4 chains/4 cores for that model)
 
 # ---- Cache directories (mirror analysis-script.Rmd) -------------------------
 OLMO_CACHE_DIR <- "../model_cache/olmo"
