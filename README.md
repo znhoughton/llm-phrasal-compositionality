@@ -2,7 +2,7 @@
 
 Probing the internal representations of language models to measure holistic storage of English V+*up* phrasal verbs (e.g. *pick up*, *set up*).
 
-> **Paper**: *The holistic storage of verb+up phrases in text-based and audio-based language models* — Zachary Houghton, Yu Zhou, Dan Pluth, Vijay Gurbani
+> **Paper**: *The holistic storage of verb+up phrases in text-based and audio-based language models* — Zachary Houghton, Yu Zhou, Dan Pluth, Jordan Hosier, Vijay Gurbani
 
 A logistic regression classifier is trained layer-by-layer on hidden states to distinguish standalone *up* tokens from random other tokens. The classifier's decision logit serves as a proxy for compositionality: high-frequency, idiomatic types (e.g. *end up*) should look less like standalone *up*, while low-frequency, transparent types should look more like it. We examine how this signal varies as a function of corpus frequency and predictability (P(up|V)) across layers in five models: OLMo-3 7B, three BabyLM OPT variants, and Whisper-small.
 
