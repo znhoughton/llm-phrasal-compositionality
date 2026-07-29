@@ -1,5 +1,15 @@
 # fit_whisper_sub_gams.R
 #
+# SUPERSEDED for reproducing the paper: the by-layer GAMs reported in
+# Appendix H (Whisper Subword Replication, Table tbl-exp3-sub-gam-smooth)
+# also control for "up" segment duration, matching Experiment 3's own
+# duration-controlled design (Equation eq-gam-layers-duration) -- this
+# script's model_freq_layer_sub_*/model_predic_layer_sub_* do NOT include
+# duration and will NOT reproduce the numbers in the current manuscript.
+# Use fit_whisper_sub_duration_gams.R instead, which fits the equivalent
+# duration-controlled models (model_freq_layer_duration_sub_*,
+# model_predic_layer_duration_sub_*). Kept here for reference only.
+#
 # Fits (or loads-if-cached) the two by-layer GAMs needed for the Whisper
 # subword condition (Experiment 2 audio replication):
 #   model_freq_layer_sub_<encoder|decoder>
