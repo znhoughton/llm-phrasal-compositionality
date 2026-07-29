@@ -271,6 +271,26 @@ whisper_first_ftp_sub <- whisper_first_sub %>% filter(!is.na(log_predic)) %>%
   group_by(component) %>%
   mutate(c_log_freq = c(scale(log_freq)), c_log_predic = c(scale(log_predic))) %>% ungroup()
 
+# Duration reconstruction for the subword condition's final-layer single-
+# predictor models (mirrors whisper_final_duration_ftp above, built from the
+# same attach_duration() / recon_duration used for the indep condition).
+# frequency-alone uses the unfiltered whisper_final_sub (matching FREQ_FORM's
+# broader dataset, no predictability-validity requirement); predictability-
+# alone filters to valid predictability, matching PREDIC_FORM.
+whisper_all_sub_dur <- bind_rows(
+  attach_duration(encoder_sub, "encoder_sub"),
+  attach_duration(decoder_sub, "decoder_sub")
+) %>% mutate(component = factor(component, levels = c("encoder", "decoder")))
+
+whisper_final_sub_dur <- whisper_all_sub_dur %>%
+  filter(layer == WH_FINAL_LAYER, !is.na(duration)) %>%
+  group_by(component) %>%
+  mutate(c_duration = c(scale(duration))) %>%
+  ungroup()
+
+whisper_final_sub_dur_ftp <- whisper_final_sub_dur %>%
+  filter(!is.na(log_predic))
+
 # ---- Pre-subset per model / component (avoids serializing full datasets) ----
 blm_data <- setNames(lapply(BLM_TAGS, function(tag) list(
   indep_final     = blm_indep_final     %>% filter(model == tag),
@@ -292,7 +312,9 @@ wh_data <- setNames(lapply(WH_COMPONENTS, function(comp) list(
   sub_final          = whisper_final_sub          %>% filter(component == comp),
   sub_first          = whisper_first_sub          %>% filter(component == comp),
   sub_final_ftp      = whisper_final_ftp_sub      %>% filter(component == comp),
-  sub_first_ftp      = whisper_first_ftp_sub      %>% filter(component == comp)
+  sub_first_ftp      = whisper_first_ftp_sub      %>% filter(component == comp),
+  sub_final_duration     = whisper_final_sub_dur     %>% filter(component == comp),
+  sub_final_duration_ftp = whisper_final_sub_dur_ftp %>% filter(component == comp)
 )), WH_COMPONENTS)
 
 # ---- Build data lookup (exported once per worker, not once per task) --------
@@ -319,9 +341,11 @@ DATA_LOOKUP <- c(
   unlist(lapply(WH_COMPONENTS, function(comp) {
     d <- wh_data[[comp]]
     setNames(list(d$final, d$first, d$final_ftp, d$first_ftp, d$final_duration_ftp,
-                  d$sub_final, d$sub_first, d$sub_final_ftp, d$sub_first_ftp),
+                  d$sub_final, d$sub_first, d$sub_final_ftp, d$sub_first_ftp,
+                  d$sub_final_duration, d$sub_final_duration_ftp),
              paste0("wh_", comp, c("_final", "_first", "_final_ftp", "_first_ftp", "_final_duration_ftp",
-                                    "_sub_final", "_sub_first", "_sub_final_ftp", "_sub_first_ftp")))
+                                    "_sub_final", "_sub_first", "_sub_final_ftp", "_sub_first_ftp",
+                                    "_sub_final_duration", "_sub_final_duration_ftp")))
   }), recursive = FALSE)
 )
 
@@ -336,6 +360,16 @@ POLY_JOINT_FORM <- paste0("logit ~ c_log_freq + I(c_log_freq^2) + ",
 # does the frequency/predictability effect survive once "up"'s own duration
 # (a proxy for phonetic reduction) is partialled out?
 JOINT_DURATION_FORM <- "logit ~ c_log_freq * c_log_predic + c_duration + (1 | verb_up)"
+
+# Single-predictor "frequency/predictability alone" models, also controlling
+# for duration -- used specifically for the Whisper subword replication
+# (Appendix: Whisper Subword Replication), to diagnose the joint model's
+# decoder frequency sign flip (Table tbl-exp3-sub-alone / Statistical
+# Suppression subsection). log_freq/log_predic are left uncentered, matching
+# FREQ_FORM/PREDIC_FORM above, so the frequency/predictability coefficient
+# stays on the same scale as the duration-free "alone" estimates.
+FREQ_DURATION_FORM   <- "logit ~ log_freq + c_duration + (1 | verb_up)"
+PREDIC_DURATION_FORM <- "logit ~ log_predic + c_duration + (1 | verb_up)"
 
 mk <- function(formula, data_key, file) list(formula = formula, data_key = data_key, file = file)
 
@@ -383,7 +417,7 @@ model_specs <- c(
       mk(POLY_JOINT_FORM, paste0("blm_", sl, "_sub_first_ftp"),   blm_brms_path(paste0("model_poly_joint_sub_first_",   sl)))
     )
   }), recursive = FALSE),
-  # ---- Whisper (26 models: 13 groups × 2 components) -------------------------
+  # ---- Whisper (28 models: 14 groups × 2 components) -------------------------
   unlist(lapply(WH_COMPONENTS, function(comp) {
     list(
       # frequency
@@ -408,7 +442,16 @@ model_specs <- c(
       mk(PREDIC_FORM,     paste0("wh_", comp, "_sub_first_ftp"), wh_brms_path(paste0("model_predic_sub_first_", comp))),
       # joint
       mk(JOINT_FORM,      paste0("wh_", comp, "_sub_final_ftp"), wh_brms_path(paste0("model_joint_sub_final_",  comp))),
-      mk(JOINT_FORM,      paste0("wh_", comp, "_sub_first_ftp"), wh_brms_path(paste0("model_joint_sub_first_",  comp)))
+      mk(JOINT_FORM,      paste0("wh_", comp, "_sub_first_ftp"), wh_brms_path(paste0("model_joint_sub_first_",  comp))),
+      # frequency/predictability alone, controlling for duration -- these are
+      # what the paper (Appendix: Whisper Subword Replication, Table
+      # tbl-exp3-sub-alone) actually reports for the subword condition's
+      # single-predictor models, superseding the duration-free sub_final /
+      # sub_final_ftp models above for that specific comparison. The joint
+      # model's own duration-controlled counterpart is fit separately by
+      # fit_whisper_sub_duration_joint.R (not yet folded into this script).
+      mk(FREQ_DURATION_FORM,   paste0("wh_", comp, "_sub_final_duration"),     wh_brms_path(paste0("model_freq_duration_sub_final_",   comp))),
+      mk(PREDIC_DURATION_FORM, paste0("wh_", comp, "_sub_final_duration_ftp"), wh_brms_path(paste0("model_predic_duration_sub_final_", comp)))
     )
   }), recursive = FALSE)
 )
