@@ -8,25 +8,6 @@ A logistic regression classifier is trained layer-by-layer on hidden states to d
 
 ---
 
-## Reproduce paper results
-
-The classifier outputs and corpus statistics are already committed. No GPU required to regenerate figures.
-
-```r
-# 1. Fit statistical models (~2 hrs on 24 cores; cached on re-run)
-source("Analyses/run_models_parallel.R")
-
-# 2. Generate result CSVs from model cache
-source("paper/prepare_results.R")
-
-# 3. Render the paper
-quarto::quarto_render("paper/writeup.qmd")
-```
-
-To rerun the full pipeline from scratch (GPU + infini-gram API access required), see [Full pipeline — OLMo-3 7B](#full-pipeline--olmo-3-7b) and following sections.
-
----
-
 ## Repository layout
 
 ```
@@ -37,7 +18,7 @@ To rerun the full pipeline from scratch (GPU + infini-gram API access required),
 │   ├── subwords_containing_up.py    # up-as-subword classifier (text models)
 │   ├── get_*_corpus_stats.py, export_predic_lookup.py   # Dolma/BabyLM frequency + predictability
 │   ├── analysis-script.Rmd          # interactive R analysis (brms + GAM)
-│   ├── run_models_parallel.R        # parallel model fitting (run before paper/)
+│   ├── run_models_parallel.R        # parallel brms/GAM model fitting (cached to model_cache/, gitignored)
 │   ├── {olmo-3-7b,babylm}/run_pipeline.sh
 │   └── whisper/
 │       ├── create_dataset.py                # scan GigaSpeech+Common Voice → candidate metadata CSVs
