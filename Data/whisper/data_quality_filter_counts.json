@@ -1,4 +1,5 @@
 {
   "ambiguous_multi_up_dropped": 36419,
-  "nonadjacent_vup_dropped": 30103
+  "nonadjacent_vup_dropped": 30103,
+  "ambiguous_neg_word_dropped": 1429
 }
