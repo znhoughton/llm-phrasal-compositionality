@@ -268,10 +268,15 @@ def drop_ambiguous_neg_word_rows(df):
     needlessly shrink the V+up test set for no correctness benefit.
     """
     is_vup       = df["label"] == "vup"
-    neg_word_l   = df["neg_word"].astype(str).str.lower()
-    transcript_l = df["transcript"].astype(str).str.lower()
+    # fillna() before astype(str): NaN -> "" (falsy, correctly skipped by the
+    # `if nw` check below) rather than the literal string "nan", which could
+    # otherwise false-match a transcript that happens to contain the word
+    # "nan". The explicit str() at point-of-use is a second guarantee in case
+    # any non-string value survives the Series-level cast.
+    neg_word_l   = df["neg_word"].fillna("").astype(str).str.lower()
+    transcript_l = df["transcript"].fillna("").astype(str).str.lower()
     counts = [
-        len(re.findall(r"\b" + re.escape(nw) + r"\b", tr)) if nw else 0
+        len(re.findall(r"\b" + re.escape(str(nw)) + r"\b", str(tr))) if nw else 0
         for nw, tr in zip(neg_word_l, transcript_l)
     ]
     ambiguous = np.array(counts) > 1
