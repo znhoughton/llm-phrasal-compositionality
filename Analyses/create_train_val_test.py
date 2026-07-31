@@ -424,10 +424,12 @@ def build_and_save(vup_sentences, vup_freq, up_sentences, all_upword_pairs, toke
     log.info("    Train: %d | Val: %d", len(upword_train_resolved), len(upword_val_resolved))
 
     # --- Negative A: random other token from standalone "up" sentences ---
+    # exclude_subword_up=True ensures the "up"-containing token (e.g. "support")
+    # is not accidentally selected as a negative example
     log.info("  Other tokens (from standalone 'up' sentences) ...")
     rng                       = np.random.default_rng(RANDOM_SEED)
     neg_up_resolved           = resolve_other_token_positions(
-        up_sentences[:N_TRAIN + N_VAL], tokenizer, rng
+        up_sentences[:N_TRAIN + N_VAL], tokenizer, rng, exclude_subword_up=True
     )
     neg_up_train_resolved     = neg_up_resolved[:N_TRAIN]
     neg_up_val_resolved       = neg_up_resolved[N_TRAIN : N_TRAIN + N_VAL]
