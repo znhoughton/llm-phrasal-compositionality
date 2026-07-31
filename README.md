@@ -250,6 +250,8 @@ BabyLM has fewer types with valid predictability because the BabyLM corpus (~100
 | Qualifying test types (≥5 occurrences) | 1,466 |
 | Train / val positives | 1,000 each |
 
+`run_whisper_classifier.py` additionally drops, from train/val/test alike: rows whose transcript contains "up" more than once (decoder token position can't be reliably resolved), and V+up rows where a word intervenes between the verb and "up" (e.g. "picked it up", not an adjacent bigram). Counts: 36,419 + 30,103 rows dropped from the indep condition; 1,494 from the subword condition's up-within-word class. See `drop_ambiguous_up_position_rows()` / `drop_nonadjacent_vup_rows()`.
+
 ---
 
 ## Dependencies
