@@ -42,6 +42,7 @@ import logging
 import os
 import pickle
 import random
+import re
 import sys
 
 import numpy as np
@@ -161,6 +162,84 @@ def load_model(model_name, device):
         cfg.encoder_layers, cfg.decoder_layers, cfg.d_model,
     )
     return processor, model
+
+
+# ---------------------------------------------------------------------------
+# DATA-QUALITY FILTERS
+# ---------------------------------------------------------------------------
+# Both filters below are Whisper/audio-specific. The text pipeline
+# (create_train_val_test.py's resolve_vup_positions / resolve_upword_positions)
+# already scans BACKWARD and takes the LAST matching token, so it never faces
+# the ambiguity these filters remove; only this script's target_val==1 branch
+# (up_ids, forward scan, take [0]) is affected. See docstrings below for why
+# each filter exists.
+
+_UP_WORD_RE = re.compile(r'\b([a-z]*up[a-z]+|[a-z]+up[a-z]*)\b', re.IGNORECASE)
+
+
+def drop_ambiguous_up_position_rows(df, label_col="label"):
+    """
+    Drop any row whose transcript contains more than one occurrence of the
+    literal word "up" (for label in {word_up, vup, standalone_up}) -- the
+    decoder embedding for these labels is extracted by scanning the
+    tokenized transcript FORWARD and taking the FIRST token matching "up"
+    (see extract_all_layers()), with no check that this is actually the
+    token whose timing matches the row's own up_start/up_end. When a
+    transcript has 2+ "up"s, the row's OWN occurrence may not be the first
+    one, silently pointing the decoder embedding at the wrong instance.
+    Confirmed empirically: among rows sharing an identical transcript with
+    distinct up_start values (i.e. separately-extracted occurrences of the
+    same segment), ~10% turned out to not be the earliest occurrence and
+    would therefore get another occurrence's decoder embedding.
+
+    For label == subword_up, the analogous ambiguity is having more than one
+    up-CONTAINING word in the transcript (find_subword_up_position scans
+    backward and takes the LAST match, which is likewise not guaranteed to
+    be this row's own occurrence when there are multiple candidates).
+    """
+    transcripts = df["transcript"].astype(str).str.lower()
+    is_subword  = df[label_col] == "subword_up"
+
+    up_word_count  = transcripts.apply(lambda t: len(_UP_WORD_RE.findall(t)))
+    up_token_count = transcripts.apply(lambda t: len(re.findall(r"\bup\b", t)))
+
+    ambiguous = np.where(is_subword, up_word_count > 1, up_token_count > 1)
+    n_dropped = int(ambiguous.sum())
+    if n_dropped:
+        log.info(
+            "  Dropping %d/%d rows with an ambiguous multi-'up' transcript "
+            "(unresolvable decoder token position)", n_dropped, len(df),
+        )
+    return df.loc[~ambiguous].copy(), n_dropped
+
+
+def drop_nonadjacent_vup_rows(df):
+    """
+    Drop V+up (label == "vup") rows where the reconstructed verb_up string
+    (e.g. "picked up") does not appear as a literal contiguous substring of
+    the transcript -- i.e. cases where classify_ups_from_doc()'s dep_=='prt'
+    allowance (build_audio_dataset.py) matched a particle-shifted
+    construction like "picked it up", where a word sits between the verb
+    and "up". The text pipeline (create_dataset.py's is_verb_up_context)
+    never allows this: it requires "up" to immediately follow a VERB token.
+    Confirmed empirically: ~14% of vup rows are non-adjacent by this check.
+    Rows for other labels are returned unchanged.
+    """
+    is_vup = df["label"] == "vup"
+    verb_up_l    = df["verb_up"].astype(str).str.lower()
+    transcript_l = df["transcript"].astype(str).str.lower()
+    adjacent = pd.Series(True, index=df.index)
+    adjacent[is_vup] = [
+        vu in tr for vu, tr in zip(verb_up_l[is_vup], transcript_l[is_vup])
+    ]
+    n_dropped = int((is_vup & ~adjacent).sum())
+    if n_dropped:
+        log.info(
+            "  Dropping %d/%d V+up rows where a word sits between the verb "
+            "and 'up' (non-adjacent particle construction)",
+            n_dropped, int(is_vup.sum()),
+        )
+    return df.loc[adjacent].copy(), n_dropped
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +660,18 @@ def main():
         df.label.isin(["word_up", "standalone_up"]).sum(),
     )
 
+    # Data-quality filters (Whisper-specific; see docstrings). Applied here,
+    # before build_splits(), so train/val/test are all built from the
+    # cleaned pool -- no ambiguous-position or non-adjacent V+up row can
+    # enter any split.
+    log.info("Applying data-quality filters...")
+    df, n_dropped_ambiguous = drop_ambiguous_up_position_rows(df)
+    df, n_dropped_nonadjacent = drop_nonadjacent_vup_rows(df)
+    filter_counts = {
+        "ambiguous_multi_up_dropped": n_dropped_ambiguous,
+        "nonadjacent_vup_dropped": n_dropped_nonadjacent,
+    }
+
     subword_df = None
     if args.subword_dataset:
         assert os.path.exists(args.subword_dataset), (
@@ -591,6 +682,13 @@ def main():
             "Loaded subword-up dataset: %d rows | %d unique up-word types",
             len(subword_df), subword_df["upword_type"].nunique(),
         )
+        subword_df, n_dropped_ambiguous_sub = drop_ambiguous_up_position_rows(subword_df)
+        filter_counts["ambiguous_multi_up_dropped_subword"] = n_dropped_ambiguous_sub
+
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "data_quality_filter_counts.json"), "w") as f:
+        json.dump(filter_counts, f, indent=2)
+    log.info("Filter counts: %s", filter_counts)
 
     train_df, val_df, test_df, qualifying, vup_counts = build_splits(df, subword_df=subword_df)
 
