@@ -3,7 +3,7 @@
   "component": "decoder",
   "n_layers": 12,
   "random_seed": 964,
-  "n_test_vup_types": 1805,
+  "n_test_vup_types": 1511,
   "layers": [
     {
       "layer": 0,
@@ -14,9 +14,11 @@
       "val_n_negative": 1000,
       "cv_mean": 0.9995,
       "cv_std": 0.001,
-      "val_acc": 1.0,
+      "val_acc": 0.9995,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 0.999,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 1,
@@ -29,7 +31,9 @@
       "cv_std": 0.0,
       "val_acc": 1.0,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 1.0,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 2,
@@ -42,7 +46,9 @@
       "cv_std": 0.0,
       "val_acc": 1.0,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 1.0,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 3,
@@ -55,7 +61,9 @@
       "cv_std": 0.0,
       "val_acc": 1.0,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 1.0,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 4,
@@ -68,7 +76,9 @@
       "cv_std": 0.0,
       "val_acc": 1.0,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 1.0,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 5,
@@ -77,11 +87,13 @@
       "train_n_negative": 1000,
       "val_n_positive": 1000,
       "val_n_negative": 1000,
-      "cv_mean": 0.9995,
-      "cv_std": 0.001,
-      "val_acc": 1.0,
+      "cv_mean": 1.0,
+      "cv_std": 0.0,
+      "val_acc": 0.999,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 0.998,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 6,
@@ -92,9 +104,11 @@
       "val_n_negative": 1000,
       "cv_mean": 1.0,
       "cv_std": 0.0,
-      "val_acc": 1.0,
+      "val_acc": 0.999,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 0.998,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 7,
@@ -105,9 +119,11 @@
       "val_n_negative": 1000,
       "cv_mean": 1.0,
       "cv_std": 0.0,
-      "val_acc": 1.0,
+      "val_acc": 0.9995,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 0.999,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 8,
@@ -116,11 +132,13 @@
       "train_n_negative": 1000,
       "val_n_positive": 1000,
       "val_n_negative": 1000,
-      "cv_mean": 0.999,
-      "cv_std": 0.002,
-      "val_acc": 1.0,
+      "cv_mean": 1.0,
+      "cv_std": 0.0,
+      "val_acc": 0.999,
       "val_up_acc": 1.0,
-      "val_other_acc": 1.0
+      "val_other_acc": 0.998,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 9,
@@ -129,11 +147,13 @@
       "train_n_negative": 1000,
       "val_n_positive": 1000,
       "val_n_negative": 1000,
-      "cv_mean": 0.999,
-      "cv_std": 0.001225,
-      "val_acc": 0.9995,
+      "cv_mean": 1.0,
+      "cv_std": 0.0,
+      "val_acc": 0.998,
       "val_up_acc": 1.0,
-      "val_other_acc": 0.999
+      "val_other_acc": 0.996,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 10,
@@ -142,11 +162,13 @@
       "train_n_negative": 1000,
       "val_n_positive": 1000,
       "val_n_negative": 1000,
-      "cv_mean": 0.9975,
-      "cv_std": 0.001581,
+      "cv_mean": 0.9965,
+      "cv_std": 0.00255,
       "val_acc": 0.9975,
-      "val_up_acc": 0.997,
-      "val_other_acc": 0.998
+      "val_up_acc": 0.999,
+      "val_other_acc": 0.996,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     },
     {
       "layer": 11,
@@ -157,9 +179,11 @@
       "val_n_negative": 1000,
       "cv_mean": 0.994,
       "cv_std": 0.003391,
-      "val_acc": 0.9915,
-      "val_up_acc": 0.989,
-      "val_other_acc": 0.994
+      "val_acc": 0.9945,
+      "val_up_acc": 0.995,
+      "val_other_acc": 0.994,
+      "val_subword_acc": null,
+      "val_subword_n": 0
     }
   ]
 }
