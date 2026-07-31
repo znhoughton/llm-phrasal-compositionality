@@ -203,7 +203,12 @@ def drop_ambiguous_up_position_rows(df, label_col="label"):
     up_word_count  = transcripts.apply(lambda t: len(_UP_WORD_RE.findall(t)))
     up_token_count = transcripts.apply(lambda t: len(re.findall(r"\bup\b", t)))
 
-    ambiguous = np.where(is_subword, up_word_count > 1, up_token_count > 1)
+    # For subword rows, find_subword_up_position() scans for ANY decoder
+    # token containing "up" as a substring, standalone "up" included -- so a
+    # transcript with exactly one up-word (e.g. "update") but also a
+    # coincidental standalone "up" elsewhere is just as ambiguous as two
+    # up-words would be. Both counts must be combined, not just up_word_count.
+    ambiguous = np.where(is_subword, (up_word_count + up_token_count) > 1, up_token_count > 1)
     n_dropped = int(ambiguous.sum())
     if n_dropped:
         log.info(
@@ -240,6 +245,44 @@ def drop_nonadjacent_vup_rows(df):
             n_dropped, int(is_vup.sum()),
         )
     return df.loc[adjacent].copy(), n_dropped
+
+
+def drop_ambiguous_neg_word_rows(df):
+    """
+    Drop rows where the row's own neg_word appears more than once in the
+    transcript. Negative-example decoder embeddings are resolved the exact
+    same way as the "up" positives (see extract_all_layers(): scan the
+    tokenized transcript for tokens matching neg_word, take the first
+    match), so they face the identical position-ambiguity bug -- just keyed
+    on whatever ordinary word was sampled as the negative rather than "up".
+    This is unrelated to neg_word ever containing "up" (it never does, by
+    construction); it's about that word repeating elsewhere in the same
+    transcript. Empirically more common than the "up" ambiguity (~19% of
+    rows) since ordinary words repeat within a sentence far more often than
+    "up" does.
+
+    Scoped to exclude "vup" rows: build_splits()'s test_df (V+up test items)
+    is built directly from vup rows without ever calling make_neg() on them,
+    so their neg_word/neg_start/neg_end are never actually used for
+    extraction -- dropping a vup row over an irrelevant neg_word would
+    needlessly shrink the V+up test set for no correctness benefit.
+    """
+    is_vup       = df["label"] == "vup"
+    neg_word_l   = df["neg_word"].astype(str).str.lower()
+    transcript_l = df["transcript"].astype(str).str.lower()
+    counts = [
+        len(re.findall(r"\b" + re.escape(nw) + r"\b", tr)) if nw else 0
+        for nw, tr in zip(neg_word_l, transcript_l)
+    ]
+    ambiguous = np.array(counts) > 1
+    ambiguous = ambiguous & ~is_vup.to_numpy()
+    n_dropped = int(ambiguous.sum())
+    if n_dropped:
+        log.info(
+            "  Dropping %d/%d rows where neg_word is ambiguous "
+            "(occurs more than once in the transcript)", n_dropped, len(df),
+        )
+    return df.loc[~ambiguous].copy(), n_dropped
 
 
 # ---------------------------------------------------------------------------
@@ -667,9 +710,11 @@ def main():
     log.info("Applying data-quality filters...")
     df, n_dropped_ambiguous = drop_ambiguous_up_position_rows(df)
     df, n_dropped_nonadjacent = drop_nonadjacent_vup_rows(df)
+    df, n_dropped_negword = drop_ambiguous_neg_word_rows(df)
     filter_counts = {
         "ambiguous_multi_up_dropped": n_dropped_ambiguous,
         "nonadjacent_vup_dropped": n_dropped_nonadjacent,
+        "ambiguous_neg_word_dropped": n_dropped_negword,
     }
 
     subword_df = None
@@ -683,7 +728,9 @@ def main():
             len(subword_df), subword_df["upword_type"].nunique(),
         )
         subword_df, n_dropped_ambiguous_sub = drop_ambiguous_up_position_rows(subword_df)
+        subword_df, n_dropped_negword_sub = drop_ambiguous_neg_word_rows(subword_df)
         filter_counts["ambiguous_multi_up_dropped_subword"] = n_dropped_ambiguous_sub
+        filter_counts["ambiguous_neg_word_dropped_subword"] = n_dropped_negword_sub
 
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "data_quality_filter_counts.json"), "w") as f:
