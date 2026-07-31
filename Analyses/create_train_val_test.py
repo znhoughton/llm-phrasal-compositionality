@@ -253,10 +253,21 @@ def resolve_up_standalone_positions(sentences, tokenizer):
 
 
 def resolve_upword_positions(upword_pairs, tokenizer):
-    """Find BPE position of the last token containing 'up' as a substring."""
+    """
+    Find the BPE position of the "up"-containing token belonging to each
+    pair's OWN target word (e.g. "update"), not just the last token in the
+    sentence that happens to contain "up" as a substring. A sentence can
+    contain a coincidental, unrelated "up"-containing token elsewhere (a
+    standalone "up", or a different up-word entirely) that would otherwise
+    get mistaken for the target. For each candidate token, decode a small
+    window of surrounding tokens and require the target word to actually
+    appear in that reconstructed text before accepting the position.
+    Pairs with no such verified position are dropped rather than guessed at.
+    """
     sentences = [sent for _, sent in upword_pairs]
     words     = [word for word, _ in upword_pairs]
     results   = []
+    n_dropped = 0
     encoded   = tokenizer(
         sentences, return_tensors="pt", padding=True,
         truncation=True, max_length=MAX_SEQ_LEN,
@@ -264,13 +275,25 @@ def resolve_upword_positions(upword_pairs, tokenizer):
     for i, (ids, mask) in enumerate(zip(encoded["input_ids"], encoded["attention_mask"])):
         actual_len = mask.sum().item()
         ids_list   = ids[:actual_len].tolist()
+        word_l     = words[i].lower()
         pos = None
         for k in range(len(ids_list) - 1, -1, -1):
-            if "up" in _decode(tokenizer, ids_list[k]):
+            if "up" not in _decode(tokenizer, ids_list[k]):
+                continue
+            window = tokenizer.decode(
+                ids_list[max(0, k - 3):min(len(ids_list), k + 3)]
+            ).lower()
+            if word_l in window:
                 pos = k
                 break
         if pos is not None:
             results.append((sentences[i], pos, words[i]))
+        else:
+            n_dropped += 1
+    log.info(
+        "  Up-word position resolution: dropped %d/%d pairs with no "
+        "verified target-word match", n_dropped, len(upword_pairs),
+    )
     return results
 
 
@@ -326,10 +349,28 @@ def resolve_other_token_positions(sentences, tokenizer, rng, exclude_subword_up=
 
 
 def resolve_vup_positions(vup_sentences_filtered, tokenizer):
-    """Find BPE position of the last 'up' token for each V+up test sentence."""
+    """
+    Find the BPE position of the 'up' token belonging to each V+up test
+    sentence's OWN type (e.g. "set up"), not just the last "up" in the
+    sentence. A sentence can contain more than one "up" -- e.g. a target
+    "set up" occurrence plus a later, unrelated "setting up" or a
+    prepositional "up" elsewhere -- in which case blindly taking the last
+    one can silently extract the wrong occurrence's embedding. Instead, for
+    each candidate "up" token, decode the sentence prefix up through that
+    token and require it to literally end with "<verb> up" (case-insensitive)
+    before accepting the position; this is robust to the verb splitting
+    across multiple BPE pieces, since it matches on decoded text rather than
+    single-token identity. Sentences with no such verified position are
+    dropped rather than guessed at.
+    """
     vup_positions = {}
+    n_checked = 0
+    n_dropped = 0
     for vup_type, sents in vup_sentences_filtered.items():
+        verb = vup_type.rsplit(" ", 1)[0].strip().lower()
+        target_bigram = f"{verb} up"
         sents_subset = sents[:N_TEST_PER_TYPE]
+        n_checked += len(sents_subset)
         encoded = tokenizer(
             sents_subset, return_tensors="pt", padding=True,
             truncation=True, max_length=MAX_SEQ_LEN,
@@ -340,13 +381,22 @@ def resolve_vup_positions(vup_sentences_filtered, tokenizer):
             ids_list   = ids[:actual_len].tolist()
             pos = None
             for k in range(len(ids_list) - 1, -1, -1):
-                if _decode(tokenizer, ids_list[k]) == "up":
+                if _decode(tokenizer, ids_list[k]) != "up":
+                    continue
+                prefix = tokenizer.decode(ids_list[:k + 1]).lower().rstrip()
+                if prefix.endswith(target_bigram):
                     pos = k
                     break
             if pos is not None:
                 type_results.append((sents_subset[i], pos, "up"))
+            else:
+                n_dropped += 1
         if type_results:
             vup_positions[vup_type] = type_results
+    log.info(
+        "  V+up position resolution: dropped %d/%d sentences with no "
+        "verified <verb> up match", n_dropped, n_checked,
+    )
     return vup_positions
 
 

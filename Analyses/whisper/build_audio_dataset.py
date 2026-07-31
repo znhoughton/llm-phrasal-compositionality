@@ -272,11 +272,22 @@ def sample_negative(word_segments, exclude_upword=False):
     Restricted to purely alphabetic words (word.isalpha()), mirroring the
     token.isalpha() criterion used for negatives in the OLMo/BabyLM pipeline.
 
+    Also restricted to words that occur exactly once in the segment (by word
+    text, case-insensitive): run_whisper_classifier.py resolves a negative's
+    decoder embedding by scanning the tokenized transcript for the first
+    token matching neg_word, so a repeated word would create the same kind
+    of position ambiguity "up" itself has to be guarded against. Filtering
+    the candidate pool here avoids ever producing an ambiguous negative,
+    rather than having to drop the row downstream.
+
     exclude_upword=True additionally excludes any word containing "up" as a
     substring (not just the exact word "up") -- used for subword_up rows so
     a negative isn't accidentally drawn from a second up-containing word in
     the same sentence, mirroring exclude_subword_up in create_train_val_test.py.
     """
+    word_counts = collections.Counter(
+        ws.get("word", "").lower().strip(".,!?;:\"'") for ws in word_segments
+    )
     candidates = []
     for ws in word_segments:
         w = ws.get("word", "").lower().strip(".,!?;:\"'")
@@ -289,6 +300,8 @@ def sample_negative(word_segments, exclude_upword=False):
         if ws["end"] - ws["start"] < 0.02:
             continue
         if not w.isalpha():
+            continue
+        if word_counts[w] > 1:
             continue
         candidates.append(ws)
     return random.choice(candidates) if candidates else None

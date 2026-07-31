@@ -250,7 +250,7 @@ BabyLM has fewer types with valid predictability because the BabyLM corpus (~100
 | Qualifying test types (≥5 occurrences) | 1,466 |
 | Train / val positives | 1,000 each |
 
-`run_whisper_classifier.py` additionally drops, from train/val/test alike: rows whose transcript contains "up" more than once (decoder token position can't be reliably resolved), and V+up rows where a word intervenes between the verb and "up" (e.g. "picked it up", not an adjacent bigram). Counts: 36,419 + 30,103 rows dropped from the indep condition; 1,494 from the subword condition's up-within-word class. See `drop_ambiguous_up_position_rows()` / `drop_nonadjacent_vup_rows()`.
+`run_whisper_classifier.py` additionally drops, from train/val/test alike: rows whose transcript contains "up" more than once (decoder token position can't be reliably resolved), V+up rows where a word intervenes between the verb and "up" (e.g. "picked it up", not an adjacent bigram), and rows whose sampled negative word repeats elsewhere in the transcript (same position-ambiguity risk, just for whichever word was drawn as the negative). Counts (indep condition): 36,419 ambiguous-position + 30,103 non-adjacent V+up + 1,429 ambiguous-negative rows dropped; final V+up test set: 1,511 types (21,860 rows). Subword condition additionally drops 2,049 ambiguous-position + 1,871 ambiguous-negative rows from the up-within-word class. `build_audio_dataset.py`'s `sample_negative()` also now restricts negative-word candidates to words that occur exactly once in the segment, so future re-extractions won't produce ambiguous negatives in the first place. See `drop_ambiguous_up_position_rows()` / `drop_nonadjacent_vup_rows()` / `drop_ambiguous_neg_word_rows()`.
 
 ---
 
