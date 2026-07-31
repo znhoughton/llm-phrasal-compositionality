@@ -501,5 +501,88 @@ future_map(
 )
 plan(sequential)
 
-message("Done. All fitted models saved to model_cache/.")
-message("You can now knit analysis-script.Rmd — all brm() calls will load from cache.")
+message("Done fitting brms models.")
+
+# ---- OLMo / BabyLM by-layer GAMs ---------------------------------------------
+# Consolidated here from analysis-script.Rmd so both the brms and GAM models
+# reported for Experiments 1-2 can be (re)fit from one script, without needing
+# to knit the full interactive notebook. Formulas/data are copied verbatim
+# from analysis-script.Rmd's olmo-bam-freq-layer-indep / olmo-bam-freq-layer-sub
+# / olmo-bam-ftp-layers / babylm-bam-freq-layer-indep / babylm-bam-freq-layer-sub
+# / babylm-bam-ftp-layers chunks. bam() is single-process and fast relative to
+# brms, so these are fit in a plain sequential loop rather than through the
+# future_map/N_WORKERS machinery above.
+suppressPackageStartupMessages(library(mgcv))
+
+olmo_cache_bam <- function(name, expr_fn) {
+  p <- file.path(OLMO_CACHE_DIR, paste0(name, ".rds"))
+  if (file.exists(p)) { message("  [cached] ", name); return(invisible(NULL)) }
+  message("  Fitting ", name, " ...")
+  m <- expr_fn()
+  saveRDS(m, p)
+  invisible(NULL)
+}
+blm_cache_bam <- function(name, expr_fn) {
+  p <- file.path(BLM_CACHE_DIR, paste0(name, ".rds"))
+  if (file.exists(p)) { message("  [cached] ", name); return(invisible(NULL)) }
+  message("  Fitting ", name, " ...")
+  m <- expr_fn()
+  saveRDS(m, p)
+  invisible(NULL)
+}
+
+olmo_indep_ftp <- olmo_indep %>% filter(!is.na(log_predic))
+olmo_sub_ftp   <- olmo_sub   %>% filter(!is.na(log_predic))
+
+message("Fitting OLMo by-layer GAMs...")
+set.seed(964)
+olmo_cache_bam("model_freq_layer_up_independently", function() {
+  bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+      data = olmo_indep, method = 'fREML', discrete = TRUE)
+})
+set.seed(964)
+olmo_cache_bam("model_freq_layer_up_subword", function() {
+  bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+      data = olmo_sub, method = 'fREML', discrete = TRUE)
+})
+set.seed(964)
+olmo_cache_bam("model_predic_layer_up_independently", function() {
+  bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
+      data = olmo_indep_ftp, method = 'fREML', discrete = TRUE)
+})
+set.seed(964)
+olmo_cache_bam("model_predic_layer_up_subword", function() {
+  bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
+      data = olmo_sub_ftp, method = 'fREML', discrete = TRUE)
+})
+
+blm_indep_ftp <- blm_indep %>% filter(!is.na(log_predic))
+blm_sub_ftp   <- blm_sub   %>% filter(!is.na(log_predic))
+
+message("Fitting BabyLM by-layer GAMs...")
+for (tag in BLM_TAGS) {
+  sl <- blm_slug(tag)
+  set.seed(964)
+  blm_cache_bam(paste0("model_freq_layer_indep_", sl), function() {
+    bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+        data = blm_indep %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+  set.seed(964)
+  blm_cache_bam(paste0("model_freq_layer_sub_", sl), function() {
+    bam(logit ~ te(log_freq, layer) + s(verb_up, bs = 're'),
+        data = blm_sub %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+  set.seed(964)
+  blm_cache_bam(paste0("model_predic_layer_indep_", sl), function() {
+    bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
+        data = blm_indep_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+  set.seed(964)
+  blm_cache_bam(paste0("model_predic_layer_sub_", sl), function() {
+    bam(logit ~ te(log_predic, layer) + s(verb_up, bs = 're'),
+        data = blm_sub_ftp %>% filter(model == tag), method = 'fREML', discrete = TRUE)
+  })
+}
+
+message("Done. All fitted models (brms + GAM) saved to model_cache/.")
+message("You can now knit analysis-script.Rmd — all brm()/bam() calls will load from cache.")
