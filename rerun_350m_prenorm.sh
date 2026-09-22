@@ -70,6 +70,15 @@ command -v "$RSCRIPT" >/dev/null 2>&1 || [ -x "$RSCRIPT" ] || {
     echo "FATAL: Rscript not found; the model-fitting stages need it." >&2
     echo "       Set RSCRIPT=/path/to/Rscript." >&2; exit 1; }
 
+# paper/ is gitignored in this repo (.gitignore:12), so a fresh clone has none
+# of it: prepare_results.R, writeup.qmd and paper/results/ live only where the
+# paper is actually worked on. Fail here rather than three stages in.
+for need in paper/prepare_results.R paper/writeup.qmd; do
+    [ -f "$need" ] || { echo "FATAL: $need missing." >&2
+        echo "       paper/ is gitignored, so it is absent from a fresh clone." >&2
+        echo "       Run this where the paper lives, or copy paper/ across." >&2; exit 1; }
+done
+
 say () { echo; echo "=== $* ==="; }
 
 # run(): a failing step must stop the run. Without this the script would sail on
