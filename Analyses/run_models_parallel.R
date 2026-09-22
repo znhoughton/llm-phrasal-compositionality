@@ -25,7 +25,9 @@ suppressPackageStartupMessages({
 if (!requireNamespace("cmdstanr", quietly = TRUE))
   stop("cmdstanr not found. Install with:\n  install.packages('cmdstanr', repos = c('https://mc-stan.org/r-packages/', getOption('repos')))\n  cmdstanr::install_cmdstan()")
 
-N_WORKERS <- 1L  # sequential: one model at a time (4 chains/4 cores for that model)
+# Each worker runs one model at 4 chains/4 cores, so total cores = N_WORKERS * 4.
+# Default 1 (sequential) preserves the old behaviour; BRMS_WORKERS=6 gives 24 cores.
+N_WORKERS <- as.integer(Sys.getenv("BRMS_WORKERS", "1"))
 
 # ---- Cache directories (mirror analysis-script.Rmd) -------------------------
 OLMO_CACHE_DIR <- "../model_cache/olmo"
