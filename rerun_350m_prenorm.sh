@@ -41,9 +41,36 @@ if [ "$BRMS_CORES" -gt "$DETECTED_CORES" ]; then
     echo "  BRMS_CORES=$BRMS_CORES exceeds $DETECTED_CORES detected cores; capping."
     BRMS_CORES="$DETECTED_CORES"
 fi
-export BRMS_WORKERS="${BRMS_WORKERS:-$(( BRMS_CORES / 4 ))}"
-[ "$BRMS_WORKERS" -lt 1 ] && BRMS_WORKERS=1 && export BRMS_WORKERS
-echo "  brms: ${BRMS_WORKERS} workers x 4 chains = $(( BRMS_WORKERS * 4 )) cores"
+
+# ── RAM budget ───────────────────────────────────────────────────────────────
+# Stan chains and (under multisession) each future worker hold their own copy of
+# the data, so parallelism is bounded by memory as well as cores.
+TOTAL_RAM_GB=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}')
+[ -z "$TOTAL_RAM_GB" ] && TOTAL_RAM_GB=0
+MAX_RAM_GB="${MAX_RAM_GB:-100}"
+if [ "$TOTAL_RAM_GB" -gt 0 ] && [ "$MAX_RAM_GB" -gt "$TOTAL_RAM_GB" ]; then
+    echo "  MAX_RAM_GB=$MAX_RAM_GB exceeds ${TOTAL_RAM_GB}GB installed; lowering."
+    MAX_RAM_GB=$(( TOTAL_RAM_GB * 8 / 10 ))
+fi
+
+# multicore forks and shares the ~8 GB of loaded data frames copy-on-write, so
+# only the per-worker sampling overhead scales. multisession copies the lot into
+# every worker, which is far more expensive -- hence the two estimates.
+export BRMS_PLAN="${BRMS_PLAN:-multicore}"
+if [ "$BRMS_PLAN" = "multicore" ]; then PER_WORKER_GB="${PER_WORKER_GB:-5}"
+else PER_WORKER_GB="${PER_WORKER_GB:-14}"; fi
+
+workers_by_cores=$(( BRMS_CORES / 4 ))
+workers_by_ram=$(( MAX_RAM_GB / PER_WORKER_GB ))
+BRMS_WORKERS="${BRMS_WORKERS:-$workers_by_cores}"
+if [ "$BRMS_WORKERS" -gt "$workers_by_ram" ]; then
+    echo "  RAM-capped: ${workers_by_cores} workers would need ~$(( workers_by_cores * PER_WORKER_GB ))GB; budget is ${MAX_RAM_GB}GB"
+    BRMS_WORKERS="$workers_by_ram"
+fi
+[ "$BRMS_WORKERS" -lt 1 ] && BRMS_WORKERS=1
+export BRMS_WORKERS
+echo "  brms: ${BRMS_WORKERS} workers x 4 chains = $(( BRMS_WORKERS * 4 )) cores, plan=${BRMS_PLAN}"
+echo "        projected RAM ~$(( BRMS_WORKERS * PER_WORKER_GB ))GB of ${MAX_RAM_GB}GB budget"
 
 
 

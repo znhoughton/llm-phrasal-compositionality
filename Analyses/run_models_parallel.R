@@ -494,7 +494,18 @@ message(sprintf(
   length(pending), N_WORKERS, N_WORKERS * 4L
 ))
 
-plan(multisession, workers = N_WORKERS)
+# multisession spawns fresh R processes and copies every global into each one,
+# and this script loads ~8 GB of data frames before forking out the fits -- so
+# RAM scales with workers. multicore forks instead, sharing the parent's memory
+# copy-on-write, which keeps one copy of the data regardless of worker count.
+# It is unavailable on Windows and unsafe under RStudio; future falls back there.
+BRMS_PLAN <- Sys.getenv("BRMS_PLAN", if (.Platform$OS.type == "unix") "multicore" else "multisession")
+if (BRMS_PLAN == "multicore" && !future::supportsMulticore()) {
+  message("multicore unsupported here; falling back to multisession (higher RAM).")
+  BRMS_PLAN <- "multisession"
+}
+message(sprintf("future plan: %s with %d workers", BRMS_PLAN, N_WORKERS))
+plan(get(BRMS_PLAN, envir = asNamespace("future")), workers = N_WORKERS)
 future_map(
   pending,
   run_one_model,
