@@ -1,0 +1,5 @@
+writeup.html
+# writeup.pdf is now tracked: it is the paper, and a separate submission repo will
+# want the built artefact alongside the source.
+writeup.tex
+writeup_files/

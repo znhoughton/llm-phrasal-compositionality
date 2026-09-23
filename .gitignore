@@ -9,7 +9,16 @@
 c4_10B_2B_local/
 hf_cache/
 model_cache/
-paper/
+# Track the paper source, the rendered PDF and the script that builds its results;
+# ignore everything else under paper/ (figures, logs, the 54 generated results CSVs,
+# the submission zip). "paper/*" rather than "paper/": git does not descend into an
+# ignored directory, so a plain "paper/" cannot be negated per file.
+paper/*
+!paper/.gitignore
+!paper/writeup.qmd
+!paper/writeup.pdf
+!paper/prepare_results.R
+!paper/references.bib
 **/__pycache__/
 *.pyc
 .ipynb_checkpoints/
