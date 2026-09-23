@@ -46,6 +46,15 @@ fi
 # Stan chains and (under multisession) each future worker hold their own copy of
 # the data, so parallelism is bounded by memory as well as cores.
 TOTAL_RAM_GB=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}')
+# free(1) does not exist on Windows or macOS. Without a fallback this stays 0, the
+# guard below is skipped because it tests -gt 0, and MAX_RAM_GB keeps its 100GB
+# default on a 34GB machine -- sizing workers against three times the RAM present.
+if [ -z "$TOTAL_RAM_GB" ]; then
+    for _c in python3 python; do
+        command -v "$_c" >/dev/null 2>&1 || continue
+        TOTAL_RAM_GB=$("$_c" -c "import psutil;print(int(psutil.virtual_memory().total/1e9))" 2>/dev/null) && break
+    done
+fi
 [ -z "$TOTAL_RAM_GB" ] && TOTAL_RAM_GB=0
 MAX_RAM_GB="${MAX_RAM_GB:-100}"
 if [ "$TOTAL_RAM_GB" -gt 0 ] && [ "$MAX_RAM_GB" -gt "$TOTAL_RAM_GB" ]; then
@@ -56,7 +65,15 @@ fi
 # multicore forks and shares the ~8 GB of loaded data frames copy-on-write, so
 # only the per-worker sampling overhead scales. multisession copies the lot into
 # every worker, which is far more expensive -- hence the two estimates.
-export BRMS_PLAN="${BRMS_PLAN:-multicore}"
+# plan(multicore) needs fork(), which Windows does not have: future falls back to
+# sequential there without saying so, so the fits would run one at a time while
+# still being budgeted as though they ran in parallel. multisession spawns real
+# workers instead, at the cost of copying the data into each (higher PER_WORKER_GB).
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) _default_plan=multisession ;;
+    *)                             _default_plan=multicore ;;
+esac
+export BRMS_PLAN="${BRMS_PLAN:-$_default_plan}"
 if [ "$BRMS_PLAN" = "multicore" ]; then PER_WORKER_GB="${PER_WORKER_GB:-5}"
 else PER_WORKER_GB="${PER_WORKER_GB:-14}"; fi
 
@@ -83,6 +100,11 @@ if [ -z "$PY" ]; then
     done
 fi
 [ -n "$PY" ] || { echo "FATAL: no python found. Set PY=/path/to/python." >&2; exit 1; }
+# Export it: Analyses/babylm/run_pipeline.sh runs in a child shell and needs the same
+# interpreter. It used to call a bare "python", which on this machine resolves to a
+# base conda install with neither spacy nor CUDA -- step 1 died on the missing import,
+# and steps 2-3 would have run the model on CPU without saying so.
+export PY
 
 # ALLOW_CPU=1 to proceed without a GPU (much slower; rarely what you want).
 ALLOW_CPU="${ALLOW_CPU:-0}"

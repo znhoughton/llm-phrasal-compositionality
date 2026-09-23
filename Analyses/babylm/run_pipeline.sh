@@ -15,6 +15,11 @@
 
 set -euo pipefail
 
+# Interpreter. These steps need spacy (step 1) and CUDA-enabled torch (steps 2-3),
+# so a bare "python" from PATH is not necessarily the right one: on this machine it
+# resolves to a base conda install that has neither. Honour PY when the caller sets it.
+PY="${PY:-python}"
+
 VUP_PKL="../Data/corpus_results.pkl"
 UPWORD_PKL="../Data/corpus_results_upwords.pkl"
 CORPUS_STATS_PKL="../Data/babylm_corpus_stats.pkl"
@@ -45,7 +50,7 @@ for TAG in "${TAGS[@]}"; do
 
   echo ""
   echo "--- Step 1: build train/val/test CSVs ---"
-  python create_train_val_test.py \
+  "$PY" create_train_val_test.py \
     --model              "$MODEL"            \
     --data-dir-up        "$DATA_UP"          \
     --data-dir-upsubword "$DATA_UPSUB"       \
@@ -55,14 +60,14 @@ for TAG in "${TAGS[@]}"; do
 
   echo ""
   echo "--- Step 2: standalone-up classifier ---"
-  python up_independently.py \
+  "$PY" up_independently.py \
     --model    "$MODEL"   \
     --data-dir "$DATA_UP" \
     --vup-pkl  "$VUP_PKL"
 
   echo ""
   echo "--- Step 3: up-subword classifier ---"
-  python subwords_containing_up.py \
+  "$PY" subwords_containing_up.py \
     --model    "$MODEL"    \
     --data-dir "$DATA_UPSUB" \
     --vup-pkl  "$VUP_PKL"

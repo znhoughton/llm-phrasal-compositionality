@@ -19,3 +19,6 @@ Analyses/analysis-script.html
 # Whisper's are small enough (~13MB) to track normally, unlike OLMo/BabyLM's
 !Data/whisper/**/all_layers_results.csv
 !Data/whisper_subword/**/all_layers_results.csv
+
+# Pipeline backups of the pre-filter results (~327MB each, regenerable).
+*.pre-filter-bak

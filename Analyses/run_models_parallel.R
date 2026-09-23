@@ -505,7 +505,12 @@ if (BRMS_PLAN == "multicore" && !future::supportsMulticore()) {
   BRMS_PLAN <- "multisession"
 }
 message(sprintf("future plan: %s with %d workers", BRMS_PLAN, N_WORKERS))
-plan(get(BRMS_PLAN, envir = asNamespace("future")), workers = N_WORKERS)
+# Resolve the strategy to a value BEFORE calling plan(). plan() evaluates its first
+# argument non-standardly: handed the expression get(...) it inspects the call, sees
+# base::get, and stops with "Trying to use non-future function". Binding it to a
+# symbol first means plan() sees a symbol that evaluates to a future strategy.
+brms_strategy <- get(BRMS_PLAN, envir = asNamespace("future"))
+plan(brms_strategy, workers = N_WORKERS)
 future_map(
   pending,
   run_one_model,
