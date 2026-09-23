@@ -3,6 +3,13 @@
 Probing the internal representations of language models to measure holistic storage of English V+*up* phrasal verbs (e.g. *pick up*, *set up*).
 
 > **Paper**: *The holistic storage of verb+up phrases in text-based and audio-based language models* — Zachary Houghton, Yu Zhou, Dan Pluth, Jordan Hosier, Vijay Gurbani
+>
+> Preprint: [arXiv:2606.13993](https://arxiv.org/abs/2606.13993). **The posted version predates a
+> correction to the OPT-350M model** and still reports its pre-correction numbers (validation
+> perplexity 18.86, learning rate 1e-4). The 350M was retrained in September 2026 because its
+> config had `do_layer_norm_before=False` while the 125M and 1.3B were pre-LN; the corrected model
+> reaches 14.35, the lowest of the three. `paper/writeup.qmd` here carries the corrected results,
+> and a revised arXiv version is pending.
 
 A logistic regression classifier is trained layer-by-layer on hidden states to distinguish standalone *up* tokens from random other tokens. The classifier's decision logit serves as a proxy for compositionality: high-frequency, idiomatic types (e.g. *end up*) should look less like standalone *up*, while low-frequency, transparent types should look more like it. We examine how this signal varies as a function of corpus frequency and predictability (P(up|V)) across layers in five models: OLMo-3 7B, three BabyLM OPT variants, and Whisper-small.
 
@@ -44,9 +51,9 @@ A logistic regression classifier is trained layer-by-layer on hidden states to d
 | Model | HuggingFace ID | Layers |
 |---|---|---|
 | OLMo-3 7B | `allenai/Olmo-3-1025-7B` | 32 |
-| BabyLM OPT-125m | `znhoughton/opt-babylm-125m-64eps-seed964` | 12 |
-| BabyLM OPT-350m | `znhoughton/opt-babylm-350m-64eps-seed964` | 24 |
-| BabyLM OPT-1.3b | `znhoughton/opt-babylm-1.3b-64eps-seed964` | 24 |
+| BabyLM OPT-125m | `znhoughton/opt-babylm-125m-20eps-seed964` | 12 |
+| BabyLM OPT-350m | `znhoughton/opt-babylm-350m-20eps-seed964` | 24 |
+| BabyLM OPT-1.3b | `znhoughton/opt-babylm-1.3b-20eps-seed964` | 24 |
 | Whisper-small | `openai/whisper-small` | 12 enc + 12 dec |
 
 ---
