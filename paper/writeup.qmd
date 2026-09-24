@@ -8,7 +8,7 @@ format:
 editor: visual
 author:
   - name:
-      literal: Zachary Houghton
+      literal: Zachary N. Houghton
     email: znh@uoregon.edu
     affiliations:
       - name: University of Oregon
@@ -22,13 +22,16 @@ author:
     affiliations:
       - name: Vail Systems, Inc
   - name:
-      literal: Vijay Gurbani
+      literal: Jordan Hosier
+    affiliations:
+      - name: Vail Systems, Inc
+  - name:
+      literal: Vijay K. Gurbani
     affiliations:
       - name: Vail Systems, Inc
 
 abstract: |
-  Humans both compute novel forms using abstract representations and store frequently encountered items as holistic units, but the factors governing this tradeoff remain poorly understood. While recent work has examined abstract knowledge in language models, holistic storage of multi-word units has received far less attention. In the present study, we probe internal representations in text-based LLMs and an ASR model, testing whether V+*up* phrasal verbs develop distinct representations as a function of frequency and predictability. Both model types exhibit holistic storage effects, with predictability effects strengthening with scale. These results support usage-based accounts and suggest that error-driven learning produces human-like storage patterns across modalities.
-  
+  One of the most central aspects of language processing is the ability to trade off between stored representations and abstract knowledge: one must retrieve stored representations, but also generate novel ones by applying productive rules. While recent work has examined abstract knowledge in language models, holistic storage has received far less attention. We probe internal representations in both text-based LLMs and an ASR model, testing whether V+*up* phrasal verbs develop distinct representations as a function of frequency and predictability. All models show evidence of holistic storage driven by frequency and predictability, further supporting usage-based theories of language.
 bibliography: references.bib
 tbl-cap-location: bottom
 execute:
@@ -235,13 +238,13 @@ There is an abundance of evidence for abstract knowledge in language use by huma
 
 Storage has had a more controversial history. Early accounts held that only irregular forms were stored holistically and that any compositionally derivable form was derived via computation [@pinkerFutureTense2002]. Evidence against this strong view has since accumulated [@kapatsinski2010frequencyuseleads; @bybeeEffectUsageDegrees1999; @morgan2016abstractknowledgedirect; @houghton2025multiwordrepresentationsminds; @stembergerAreInflectedForms2004]. @stembergerAreInflectedForms2004 showed that inflection errors are less common for high-frequency words, suggesting frequency-sensitive storage even for regularly derived forms. @bybeeEffectUsageDegrees1999 demonstrated that *don't* is phonetically more reduced in high-frequency phrases like *I don't know* than in lower-frequency phrases like *I don't go*; if *don't* always had the same underlying representation, such phrase-level reduction is difficult to explain.
 
-Processing studies provide converging evidence. @morgan2016abstractknowledgedirect found that while low-frequency binomials are ordered by abstract preferences, high-frequency binomials are governed by item-specific preferences, suggesting a frequency-dependent shift from computation to storage. Most directly relevant to the present study, @kapatsinski2010frequencyuseleads found that listeners are slower to detect *up* in high-frequency V+*up* phrases than in lower-frequency ones, and @houghton2025multiwordrepresentationsminds and found that this replicates for phrases varying in predictability as well. These findings suggest that high-frequency and high-predictability V+*up* phrases are represented holistically, with *up* no longer as accessible as a distinct unit.
+Processing studies have provided converging evidence. @morgan2016abstractknowledgedirect found that while human ordering preferences for low-frequency binomials are driven by abstract preferences, preferences for high-frequency binomials are driven by item-specific preferences, suggesting a frequency-dependent shift from computation to storage. Most directly relevant to the present study, @kapatsinski2009frequency used a button-pressing task, in which participants responded upon hearing *up* within a word or a V+*up* phrase, and found that reaction times were U-shaped across frequency: faster for medium-frequency V+*up* phrases than low-frequency ones, but slower again for high-frequency phrases. Further, @houghton2025multiwordrepresentationsminds found that this pattern holds for high-predictability phrases (V+*up* phrases where *up* is likely to appear given the verb), suggesting that high-frequency and high-predictability V+*up* phrases are represented holistically.
 
 ## Computation vs Storage in Language Models
 
 Whether language models exhibit analogous computation-storage tradeoffs has become an active area of inquiry. On the computation side, results are mixed: some studies find that models learn abstract generalizations not present in training [@misraLanguageModelsLearn2024; @yaoBothDirectIndirect2025], while others find that models fail where abstract knowledge is required, such as morphological generalization to novel words [@haleyThisBERTNow2020] or relying on item-specific rather than abstract preferences where humans use the latter [@houghton2025roleabstractrepresentations; @lasriSubjectVerbAgreement2022]. On the storage side, there is no doubt that models rely heavily on memorization [@mccoy2023howmuchlanguage], and item-specific frequency effects have been documented in tasks where humans show abstract preferences [@houghton2025roleabstractrepresentations].
 
-Whether language models develop holistic phrasal representations in the same way as humans is an open question. If they do, this would suggest that holistic storage is a natural consequence of learning from distributional patterns in the language, requiring no special storage mechanism beyond what is needed for general language learning, and lending support to usage-based accounts of how computation and storage interact. This question is especially pressing for audio-based models: the human behavioral evidence reviewed above comes from listening paradigms. An automatic speech recognition (ASR) model is therefore arguably the most ecologically valid computational analog of the human results. And yet, holistic phrasal storage has never been examined in any such model. More broadly, holistic phrasal storage in language models has rarely been examined in any modality, and it has not been studied in models trained on human-comparable amounts of data.
+Despite these findings, it remains unclear as to whether LLMs develop holistic phrasal representations in a manner similar to humans. If they do, this would suggest that holistic storage is a natural consequence of learning from distributional patterns in the language, requiring no explicit storage mechanism, and lending support to usage-based accounts of how computation and storage interact. Audio-based models are especially well-suited to address this question because a good deal of the evidence for holistic storage comes from listening paradigms. It is thus important to understand whether ASR models, not just LLMs, show evidence of holistic storage; yet holistic storage has never been examined in any ASR model [though see @pluth2026mechanisticinterpretabilityasrmodels for related mechanistic interpretability work on Whisper], and has rarely been examined in any modality or in models trained on human-comparable amounts of data.
 
 ## Present Study
 
@@ -269,7 +272,7 @@ Experiment 1 tests whether LLMs develop holistic phrasal representations analogo
 
 ## Methods
 
-For each model (OLMo-3 7B and BabyLM OPT-125M, OPT-350M, and OPT-1.3B), we extracted the representation of the token *up* from each hidden layer of the models for each sentence. Using these representations, we trained a separate logistic regression classifier for each layer to distinguish standalone *up* (which did not occur in V+*up* phrases in the training of the classifier) from other tokens in the same sentence (these other tokens did not contain the segment *up* in any capacity); the training items are described below. The trained classifier was then tested on a held-out test set comprising V+*up* phrases, and for each sentence the classifier returned a logit score reflecting how confident the classifier was that the representation of *up* in the V+*up* phrase resembled the standalone class. We then examined the logit returned by the classifier as a function of frequency and predictability of the V+*up* phrase.
+For each model, we extracted the representation of the token *up* from each hidden layer of the models for each sentence. Using these representations, we trained a separate logistic regression classifier for each layer to distinguish prepositional *up* (which did not occur in V+*up* phrases in the training of the classifier) from other tokens in the same sentence (these other tokens did not contain the segment *up* in any capacity). The trained classifier was then tested on a held-out test set comprising V+*up* phrases, and for each sentence the classifier returned a logit score reflecting the predicted probability that the representation of *up* in the V+*up* phrase resembled the standalone, prepositional class.
 
 Frequency for each V+*up* type is operationalized as its raw corpus count, log-transformed:
 
