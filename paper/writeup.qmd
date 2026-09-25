@@ -509,11 +509,7 @@ plot_layer_heatmap(grid_freq_sub, grid_predic_sub)
 
 The results of Experiment 2 mostly replicate those of Experiment 1.
 Frequency shows a strong, consistent effect such that the representation of *up* in high-frequency
-V+*up* phrases diverges from representations of *up*, even for a probe trained to identify *up* as a segment, regardless of the semantics. Predictability behaves less consistently than frequency. The three BabyLMs share a corpus and a
-training budget and differ only in size, yet their predictability effects do not order by size: the 350M
-shows the strongest negative effect of the three and the 1.3B the only positive one. The OLMo model, on the
-other hand, shows a large negative effect. Since it differs from them in both number of parameters and
-data diversity, it's difficult to attribute that effect to either one alone. The results also mitigate concerns that Experiment 1's findings reflect polysemy or semantic bleaching: Experiment 2's positive class is defined purely orthographically, regardless of semantics, yet the effects of frequency and predictability largely replicate.
+V+*up* phrases diverges from representations of *up*, even for a probe trained to identify *up* as a segment, regardless of the semantics. Predictability behaves less consistently than frequency. The three BabyLMs share a training dataset and differ only in size, yet their predictability effects are non-monotonic: the 350M shows the strongest negative effect of the three and the 1.3B the only positive one. The OLMo model, on the other hand, shows a large negative effect. Since OLMo differs from the BabyLMs in both number of parameters and data diversity, it's difficult to attribute that effect to either one alone. The results also mitigate concerns that Experiment 1's findings reflect polysemy or semantic bleaching: Experiment 2's positive class is defined purely orthographically, regardless of semantics, yet the effects of frequency and predictability largely replicate.
 
 # Experiment 3: Whisper (ASR Model) {#experiment-3-whisper-asr-model}
 
