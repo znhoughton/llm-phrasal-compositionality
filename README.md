@@ -4,12 +4,10 @@ Probing the internal representations of language models to measure holistic stor
 
 > **Paper**: *The holistic storage of verb+up phrases in text-based and audio-based language models* — Zachary Houghton, Yu Zhou, Dan Pluth, Jordan Hosier, Vijay Gurbani
 >
-> Preprint: [arXiv:2606.13993](https://arxiv.org/abs/2606.13993). **The posted version predates a
-> correction to the OPT-350M model** and still reports its pre-correction numbers (validation
-> perplexity 18.86, learning rate 1e-4). The 350M was retrained in September 2026 because its
-> config had `do_layer_norm_before=False` while the 125M and 1.3B were pre-LN; the corrected model
-> reaches 14.35, the lowest of the three. `paper/writeup.qmd` here carries the corrected results,
-> and a revised arXiv version is pending.
+> Preprint: [arXiv:2606.13993](https://arxiv.org/abs/2606.13993) · Models and checkpoints:
+> [huggingface.co/znhoughton](https://huggingface.co/znhoughton)
+>
+> `paper/writeup.qmd` is the source of the paper and the only place its numbers are defined.
 
 A logistic regression classifier is trained layer-by-layer on hidden states to distinguish standalone *up* tokens from random other tokens. The classifier's decision logit serves as a proxy for compositionality: high-frequency, idiomatic types (e.g. *end up*) should look less like standalone *up*, while low-frequency, transparent types should look more like it. We examine how this signal varies as a function of corpus frequency and predictability (P(up|V)) across layers in five models: OLMo-3 7B, three BabyLM OPT variants, and Whisper-small.
 
@@ -26,6 +24,11 @@ A logistic regression classifier is trained layer-by-layer on hidden states to d
 │   ├── get_*_corpus_stats.py, export_predic_lookup.py   # Dolma/BabyLM frequency + predictability
 │   ├── analysis-script.Rmd          # interactive R analysis (brms + GAM)
 │   ├── run_models_parallel.R        # parallel brms/GAM model fitting (cached to model_cache/, gitignored)
+│   ├── extract_whisper_final_numbers.R   # pulls every Experiment 3 number the writeup quotes
+│   ├── compute_suppression_table.R       # the Statistical Suppression appendix table, all 10 conditions
+│   ├── whisper_alone_duration_models.R   # single-predictor "alone" models, controlling for duration
+│   ├── whisper_{indep,sub}_refit_check.R # refit checks for the two Whisper conditions
+│   ├── dedup_replication_check.R         # refits every reported model with duplicate test instances removed
 │   ├── {olmo-3-7b,babylm}/run_pipeline.sh
 │   └── whisper/
 │       ├── create_dataset.py                # scan GigaSpeech+Common Voice → candidate metadata CSVs
@@ -41,8 +44,45 @@ A logistic regression classifier is trained layer-by-layer on hidden states to d
 │   ├── olmo-3-7b/             # classifier outputs: Data_up/, Data_upsubword/
 │   ├── babylm/{opt-125m,opt-350m,opt-1.3b}/
 │   └── whisper/{encoder,decoder}/
+├── paper/
+│   ├── writeup.qmd            # the paper; every reported number is computed here
+│   ├── writeup.pdf            # rendered output
+│   ├── prepare_results.R      # builds the result CSVs the paper reads
+│   └── references.bib
 └── model_cache/               # fitted .rds model objects — gitignored
 ```
+
+Everything else under `paper/` is generated (figures, result CSVs, the LaTeX Quarto emits)
+and is gitignored; only the four files above are tracked.
+
+---
+
+## Building the paper
+
+`paper/writeup.qmd` produces three PDFs from the one source. The mode is passed on the
+command line rather than stored in the file, so the same source serves all three:
+
+```bash
+cd paper
+
+# Review: anonymised, line-numbered.
+quarto render writeup.qmd --to acl-pdf
+
+# Preprint: authors and affiliations shown, page numbers, model and code links.
+quarto render writeup.qmd --to acl-pdf \
+  -M acl-mode:preprint -M public-links:true -M repo-link:true \
+  --output writeup-preprint.pdf
+
+# Camera-ready: as the preprint, without page numbers (the proceedings supply them).
+quarto render writeup.qmd --to acl-pdf \
+  -M acl-mode:final -M public-links:true -M repo-link:true \
+  --output writeup-final.pdf
+```
+
+`public-links` turns on the availability statements (models on HuggingFace, code here) and
+`repo-link` adds the repository link specifically; the review build omits both so it stays
+anonymous. Rendering needs the `acl` Quarto extension installed under `paper/_extensions/`,
+which is not tracked here.
 
 ---
 

@@ -31,3 +31,15 @@ Analyses/analysis-script.html
 
 # Pipeline backups of the pre-filter results (~327MB each, regenerable).
 *.pre-filter-bak
+
+# Run transcripts from the analysis scripts above. The scripts are tracked; their output
+# logs are regenerable and timestamped, so they only add churn.
+Analyses/*.log
+model_refit_*.log
+
+# Local staging copies left by the data pipeline, alongside the *.pre-filter-bak rule.
+*.stale-local-bak
+
+# The posted arXiv build, unpacked locally to diff the paper against it. paper/writeup.qmd
+# is the source of truth and regenerates the same PDF, so this is a local reference only.
+arxiv_v2/
