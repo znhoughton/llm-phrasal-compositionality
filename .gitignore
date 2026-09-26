@@ -43,3 +43,14 @@ model_refit_*.log
 # The posted arXiv build, unpacked locally to diff the paper against it. paper/writeup.qmd
 # is the source of truth and regenerates the same PDF, so this is a local reference only.
 arxiv_v2/
+
+# Per-layer classifier outputs and their diagnostic plots. Nothing reads these back:
+# paper/prepare_results.R reads the all_layers_results.csv aggregate in the same directory,
+# which carries identical columns and is simply their concatenation. Keeping both tracked
+# duplicated ~2.7GB for no benefit.
+**/layer_[0-9][0-9].csv
+**/layer_[0-9][0-9]_plot.png
+
+# ...but do track the prepared results the paper is actually built from (~10MB), so the
+# figures and tables can be rebuilt from a clone without the raw data or a GPU.
+!paper/results/
