@@ -15,7 +15,6 @@ model_cache/
 # ignored directory, so a plain "paper/" cannot be negated per file.
 paper/*
 !paper/.gitignore
-!paper/writeup.qmd
 !paper/writeup.pdf
 !paper/prepare_results.R
 !paper/render-both.sh
@@ -55,3 +54,9 @@ arxiv_v2/
 # ...but do track the prepared results the paper is actually built from (~10MB), so the
 # figures and tables can be rebuilt from a clone without the raw data or a GPU.
 !paper/results/
+
+
+# The paper source carries the author block in its YAML header, so it is kept out of
+# the public repository while the work is under double-blind review. Re-add it with
+# `git add -f` once the paper is accepted.
+paper/writeup.qmd
