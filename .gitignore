@@ -60,3 +60,6 @@ arxiv_v2/
 # the public repository while the work is under double-blind review. Re-add it with
 # `git add -f` once the paper is accepted.
 paper/writeup.qmd
+# manual review copies (local markup, not tracked)
+Analyses/review_text_100.csv
+Analyses/review_whisper_100.csv
