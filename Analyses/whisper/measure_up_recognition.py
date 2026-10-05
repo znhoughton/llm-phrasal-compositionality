@@ -151,12 +151,14 @@ def main():
     model = WhisperForConditionalGeneration.from_pretrained(args.model).to(args.device).eval()
 
     rows = []
-    bar = tqdm(df.iterrows(), total=len(df), desc="transcribing", unit="seg",
-               file=sys.stdout, dynamic_ncols=True, mininterval=1.0)
+    # tqdm stays on stderr: stdout is block-buffered under a pipe or nohup, so a bar written
+    # there is invisible until kilobytes accumulate. The heartbeat below is flushed explicitly
+    # and is dense at the start, so a stalled first segment is obvious immediately.
+    n_err = 0
+    bar = tqdm(df.iterrows(), total=len(df), desc="transcribing", unit="seg", mininterval=1.0)
     for i, (_, r) in enumerate(bar):
-        if i and i % 200 == 0:          # visible even when tqdm's bar is swallowed by a pipe
-            print("  ... %d/%d segments" % (i, len(df)))
-            sys.stdout.flush()
+        if i < 50 or i % 200 == 0:
+            print("  ... %d/%d segments (%d errors)" % (i, len(df), n_err), flush=True)
         try:
             audio, sr = sf.read(r["audio_path"])
             if sr != 16000:
@@ -167,6 +169,14 @@ def main():
                 ids = model.generate(feats, max_new_tokens=200)
             hyp = normalise(processor.batch_decode(ids, skip_special_tokens=True)[0])
         except Exception as e:                   # keep going; count as not-evaluated
+            n_err += 1
+            if n_err <= 3:
+                print("  error on segment %d: %s" % (i, str(e)[:120]), flush=True)
+            if i == 19 and n_err == 20:
+                sys.exit("
+every one of the first 20 segments failed -- aborting rather than "
+                         "grinding through %d rows producing nothing. See the errors above."
+                         % len(df))
             rows.append({"verb_up": r.get("verb_up"), "ok": np.nan, "error": str(e)[:80]})
             continue
 
