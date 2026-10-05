@@ -52,6 +52,12 @@ def parse_args():
     p.add_argument("--model", default="openai/whisper-small")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--limit", type=int, default=None, help="only process the first N rows")
+    p.add_argument("--sample", type=int, default=None,
+                   help="randomly subsample N segments (preferred over --limit, which takes them "
+                        "in file order). A few thousand pins the recognition rate and the "
+                        "correlation tightly enough; the full set is a quarter of a million "
+                        "segments decoded one at a time.")
+    p.add_argument("--seed", type=int, default=964)
     p.add_argument("--strict", action="store_true",
                    help="count a hit only if the full V+up bigram appears, not just 'up'")
     p.add_argument("--out", default="up_recognition.csv")
@@ -106,7 +112,9 @@ def main():
     # Positives only: rows whose label marks them as an "up" instance.
     if "label" in df.columns:
         df = df[df["label"].astype(str).str.contains("up", case=False, na=False)]
-    if args.limit:
+    if args.sample and args.sample < len(df):
+        df = df.sample(n=args.sample, random_state=args.seed)
+    elif args.limit:
         df = df.head(args.limit)
     if not len(df):
         sys.exit("no rows to process")
@@ -127,6 +135,16 @@ def main():
         sys.exit("audio not found, e.g.\n  %s\nThe GigaSpeech wavs are not in the repo. Run this "
                  "where they live, or pass --dataset a CSV whose audio_path column points at "
                  "them." % missing[0])
+
+    # State the device up front: torch silently falls back to CPU if this build has no CUDA,
+    # and at one generate() call per segment that is the difference between hours and days.
+    print("model:    %s" % args.model)
+    print("device:   %s%s" % (args.device,
+          "" if args.device != "cpu" else "   <-- CPU: this will be very slow, consider --sample"))
+    if args.device.startswith("cuda") and torch.cuda.is_available():
+        print("gpu:      %s" % torch.cuda.get_device_name(0))
+    print("segments: %d" % len(df))
+    sys.stdout.flush()
 
     processor = WhisperProcessor.from_pretrained(args.model)
     model = WhisperForConditionalGeneration.from_pretrained(args.model).to(args.device).eval()
