@@ -1,6 +1,10 @@
 ---
 title: "The Holistic Storage of Verb+*Up* Phrases in Text-based and Audio-based Language Models"
 acl-mode: review
+code-url: https://github.com/znhoughton/llm-phrasal-compositionality
+weights-url: https://huggingface.co/znhoughton
+# anon-code-url: https://anonymous.4open.science/r/XXXXXX
+# anon-weights-url:
 format:
   acl-pdf:
     keep-tex: true
@@ -271,7 +275,7 @@ The present study addresses this gap. We probe internal representations in text-
 
 [^1]: The model was trained on 150 million tokens. The average college-aged human experiences approximately 350 million words [@levy2012processing] so the model is trained on a little less than half the tokens that an average college-aged human has experienced.
 
--   We train and release three open-access autoregressive models trained on the BabyLM v3 corpus [@charpentier2025babylm], checkpointed every 20M tokens, to facilitate future research on human-scale language learning.`\ifdefined\publiclinks\footnote{Model weights and checkpoints are released at \url{https://huggingface.co/znhoughton}.}\else\footnote{A HuggingFace link is omitted here to preserve double-blind review; model weights and checkpoints will be released publicly upon publication.}\fi`{=latex}
+-   We train and release three open-access autoregressive models trained on the BabyLM v3 corpus [@charpentier2025babylm], checkpointed every 20M tokens, to facilitate future research on human-scale language learning.`\weightsfootnote`{=latex}
 
 -   We show that holistic phrasal storage emerges in both text-based LLMs and an ASR model, establishing that frequency- and predictability-driven holistic representations arise even from models trained on an amount of data comparable to humans, and even across modalities.
 
@@ -279,7 +283,7 @@ The present study addresses this gap. We probe internal representations in text-
 
 # Model Training {#model-training}
 
-In order to examine holistic storage in models that have seen human-comparable amount of data, we trained three language models on the BabyLM v3 corpus [@charpentier2025babylm], a 150M-token dataset designed to be more reflective of the scale and quality of the language that humans receive.[^2] All three models follow the OPT decoder-only transformer architecture [@zhang2022opt], with 125M, 350M, and 1.3B parameters, respectively.`\ifdefined\repolink\footnote{All code and analyses in this paper can be found here: \url{https://github.com/znhoughton/llm-phrasal-compositionality}.}\fi`{=latex}
+In order to examine holistic storage in models that have seen human-comparable amount of data, we trained three language models on the BabyLM v3 corpus [@charpentier2025babylm], a 150M-token dataset designed to be more reflective of the scale and quality of the language that humans receive.[^2] All three models follow the OPT decoder-only transformer architecture [@zhang2022opt], with 125M, 350M, and 1.3B parameters, respectively.`\codefootnote`{=latex}
 
 [^2]: Though it is worth noting, as has been pointed out before [e.g., @houghton2025multiwordrepresentationsminds], that it may be misleading to compare the tokens that LLMs receive to the "tokens" that humans receive, since humans encounter language in a context-rich environment while LLMs see only the raw text.
 

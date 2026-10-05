@@ -2,11 +2,6 @@
 
 Probing the internal representations of language models to measure holistic storage of English V+*up* phrasal verbs (e.g. *pick up*, *set up*).
 
-> **Paper**: *The holistic storage of verb+up phrases in text-based and audio-based language models* — Zachary Houghton, Yu Zhou, Dan Pluth, Jordan Hosier, Vijay Gurbani
->
-> Preprint: [arXiv:2606.13993](https://arxiv.org/abs/2606.13993) · Models and checkpoints:
-> [huggingface.co/znhoughton](https://huggingface.co/znhoughton)
->
 > `paper/writeup.qmd` is the source of the paper and the only place its numbers are defined.
 
 A logistic regression classifier is trained layer-by-layer on hidden states to distinguish standalone *up* tokens from random other tokens. The classifier's decision logit serves as a proxy for compositionality: high-frequency, idiomatic types (e.g. *end up*) should look less like standalone *up*, while low-frequency, transparent types should look more like it. We examine how this signal varies as a function of corpus frequency and predictability (P(up|V)) across layers in five models: OLMo-3 7B, three BabyLM OPT variants, and Whisper-small.
@@ -59,30 +54,25 @@ and is gitignored; only the four files above are tracked.
 
 ## Building the paper
 
-`paper/writeup.qmd` produces three PDFs from the one source. The mode is passed on the
-command line rather than stored in the file, so the same source serves all three:
+`paper/writeup.qmd` produces both the anonymous and the named PDF from one source. The
+mode is passed on the command line rather than stored in the file:
 
 ```bash
 cd paper
 
-# Review: anonymised, line-numbered.
-quarto render writeup.qmd --to acl-pdf
+# Both versions plus the arXiv bundle:
+bash render-both.sh
 
-# Preprint: authors and affiliations shown, page numbers, model and code links.
-quarto render writeup.qmd --to acl-pdf \
-  -M acl-mode:preprint -M public-links:true -M repo-link:true \
-  --output writeup-preprint.pdf
-
-# Camera-ready: as the preprint, without page numbers (the proceedings supply them).
-quarto render writeup.qmd --to acl-pdf \
-  -M acl-mode:final -M public-links:true -M repo-link:true \
-  --output writeup-final.pdf
+# Or individually:
+quarto render writeup.qmd                      # review: anonymised, line-numbered
+quarto render writeup.qmd -M acl-mode:final    # named, with link footnotes
 ```
 
-`public-links` turns on the availability statements (models on HuggingFace, code here) and
-`repo-link` adds the repository link specifically; the review build omits both so it stays
-anonymous. Rendering needs the `acl` Quarto extension installed under `paper/_extensions/`,
-which is not tracked here.
+`acl-mode` is the only switch. It selects the author block, and the template reads
+`code-url` / `weights-url` from the YAML header (plus `anon-code-url` /
+`anon-weights-url` when set) to decide which link footnotes appear, so the anonymous
+and named builds come from one source. Rendering needs the `acl` Quarto extension
+installed under `paper/_extensions/`, which is not tracked here.
 
 ---
 

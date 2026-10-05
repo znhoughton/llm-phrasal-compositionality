@@ -29,7 +29,7 @@ echo "   -> writeup-anonymous.pdf"
 
 echo "== 2/4  named build (arXiv) =="
 # acl-mode:final shows the author block; the two flags enable the link footnotes.
-quarto render "$QMD" -M acl-mode:final -M public-links:true -M repo-link:true
+quarto render "$QMD" -M acl-mode:final
 cp writeup.pdf writeup-arxiv.pdf
 echo "   -> writeup-arxiv.pdf"
 
