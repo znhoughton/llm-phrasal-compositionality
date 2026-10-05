@@ -10,9 +10,9 @@ than arguing away.
 
 WHAT IT DOES. For each segment, Whisper freely transcribes the audio (greedy, no teacher forcing
 -- this is the one place in the pipeline where the model is asked to produce text). We then ask
-whether a standalone "up" appears in its output, and whether the V+up bigram does. Results are
-broken down by frequency decile, which is the comparison that matters: a flat recognition rate
-across deciles means recognition cannot be driving the frequency effect.
+whether a standalone "up" appears in its output, and whether the V+up bigram does. We then report the
+correlation between log-frequency and recognition, which is the comparison that matters: if
+recognition does not track frequency, it cannot be driving the frequency effect.
 
 NOTE. Recognition is scored per segment, not force-aligned to the token position, so a segment
 containing another "up" could score as a hit. Segments with more than one "up" are dropped by the
@@ -127,22 +127,29 @@ def main():
     print("  'up' recognised:        %.1f%%" % (100 * scored["up_recognised"].mean()))
     print("  V+up bigram recognised: %.1f%%" % (100 * scored["bigram_recognised"].mean()))
 
-    # The decile breakdown is the part that answers the reviewer: if recognition is flat across
-    # frequency, recognition error cannot be generating a frequency effect.
+    # The association between frequency and recognition is what answers the reviewer: if
+    # recognition does not track frequency, recognition error cannot generate a frequency effect.
     if args.freq and os.path.exists(args.freq):
         f = pd.read_csv(args.freq)[["verb_up", "frequency"]].drop_duplicates("verb_up")
         m = scored.merge(f, on="verb_up", how="inner")
         if len(m):
-            m["decile"] = pd.qcut(np.log(m["frequency"] + 1), 10, labels=False, duplicates="drop")
-            g = m.groupby("decile").agg(n=("ok", "size"), recognised=("ok", "mean"))
-            print("\nrecognition rate by frequency decile (low -> high):")
-            for d, row in g.iterrows():
-                print("  %2d  n=%6d  %.1f%%" % (d, row["n"], 100 * row["recognised"]))
-            r = np.corrcoef(np.log(m["frequency"] + 1), m["ok"].astype(float))[0, 1]
-            print("\n  r(log-frequency, recognised) = %+.4f" % r)
-            print("  A near-zero r means recognition cannot drive the frequency effect.")
+            lf = np.log(m["frequency"] + 1).to_numpy(float)
+            y = m["ok"].to_numpy(float)
+            r = np.corrcoef(lf, y)[0, 1]                      # point-biserial, y is 0/1
+            n = len(m)
+            # Fisher z interval, so the reader can see whether r is distinguishable from zero.
+            if n > 3 and -1 < r < 1:
+                z = np.arctanh(r)
+                se = 1.0 / np.sqrt(n - 3)
+                lo, hi = np.tanh(z - 1.96 * se), np.tanh(z + 1.96 * se)
+                ci = "  95%% CI [%+.4f, %+.4f]" % (lo, hi)
+            else:
+                ci = ""
+            print("\n  r(log-frequency, recognised) = %+.4f%s   (n=%d)" % (r, ci, n))
+            print("  An interval spanning zero means recognition does not track frequency, so it")
+            print("  cannot be driving the frequency effect on divergence.")
         else:
-            print("\n(no verb_up overlap with --freq file; skipped decile breakdown)")
+            print("\n(no verb_up overlap with --freq file; skipped the frequency association)")
 
 
 if __name__ == "__main__":
