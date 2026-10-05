@@ -55,6 +55,11 @@ def parse_args():
     p.add_argument("--strict", action="store_true",
                    help="count a hit only if the full V+up bigram appears, not just 'up'")
     p.add_argument("--out", default="up_recognition.csv")
+    p.add_argument("--from-csv", dest="from_csv", default=None,
+                   help="skip transcription and re-summarise an existing --out file. Transcription "
+                        "is the expensive part and is already saved per segment, so a run that "
+                        "finished under an older version of this script can be summarised with "
+                        "this instead of being repeated.")
     return p.parse_args()
 
 
@@ -63,8 +68,40 @@ def normalise(s):
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", str(s).lower())).strip()
 
 
+def summarise(out, freq_path):
+    """Print recognition rates and the frequency association for a scored table."""
+    scored = out.dropna(subset=["ok"])
+    print("\nsegments scored: %d (%d failed to process)" % (len(scored), len(out) - len(scored)))
+    print("  'up' recognised:        %.1f%%" % (100 * scored["up_recognised"].mean()))
+    print("  V+up bigram recognised: %.1f%%" % (100 * scored["bigram_recognised"].mean()))
+
+    # The association between frequency and recognition is what answers the reviewer: if
+    # recognition does not track frequency, recognition error cannot generate a frequency effect.
+    if freq_path and os.path.exists(freq_path):
+        f = pd.read_csv(freq_path)[["verb_up", "frequency"]].drop_duplicates("verb_up")
+        m = scored.merge(f, on="verb_up", how="inner")
+        if not len(m):
+            print("\n(no verb_up overlap with --freq file; skipped the frequency association)")
+            return
+        lf = np.log(m["frequency"] + 1).to_numpy(float)
+        y = m["ok"].to_numpy(float)
+        r = np.corrcoef(lf, y)[0, 1]          # Pearson; with y dichotomous this is point-biserial
+        n = len(m)
+        ci = ""
+        if n > 3 and -1 < r < 1:              # Fisher z interval
+            se = 1.0 / np.sqrt(n - 3)
+            lo, hi = np.tanh(np.arctanh(r) - 1.96 * se), np.tanh(np.arctanh(r) + 1.96 * se)
+            ci = "  95%% CI [%+.4f, %+.4f]" % (lo, hi)
+        print("\n  r(log-frequency, recognised) = %+.4f%s   (n=%d)" % (r, ci, n))
+        print("  An interval spanning zero means recognition does not track frequency, so it")
+        print("  cannot be driving the frequency effect on divergence.")
+
+
 def main():
     args = parse_args()
+    if args.from_csv:
+        summarise(pd.read_csv(args.from_csv), args.freq)
+        return
     df = pd.read_csv(args.dataset)
     # Positives only: rows whose label marks them as an "up" instance.
     if "label" in df.columns:
@@ -121,34 +158,7 @@ def main():
 
     out = pd.DataFrame(rows)
     out.to_csv(args.out, index=False)
-    scored = out.dropna(subset=["ok"])
-    print("\nsegments scored: %d (%d failed to process)" % (len(scored), len(out) - len(scored)))
-    print("  'up' recognised:        %.1f%%" % (100 * scored["up_recognised"].mean()))
-    print("  V+up bigram recognised: %.1f%%" % (100 * scored["bigram_recognised"].mean()))
-
-    # The association between frequency and recognition is what answers the reviewer: if
-    # recognition does not track frequency, recognition error cannot generate a frequency effect.
-    if args.freq and os.path.exists(args.freq):
-        f = pd.read_csv(args.freq)[["verb_up", "frequency"]].drop_duplicates("verb_up")
-        m = scored.merge(f, on="verb_up", how="inner")
-        if len(m):
-            lf = np.log(m["frequency"] + 1).to_numpy(float)
-            y = m["ok"].to_numpy(float)
-            r = np.corrcoef(lf, y)[0, 1]                      # point-biserial, y is 0/1
-            n = len(m)
-            # Fisher z interval, so the reader can see whether r is distinguishable from zero.
-            if n > 3 and -1 < r < 1:
-                z = np.arctanh(r)
-                se = 1.0 / np.sqrt(n - 3)
-                lo, hi = np.tanh(z - 1.96 * se), np.tanh(z + 1.96 * se)
-                ci = "  95%% CI [%+.4f, %+.4f]" % (lo, hi)
-            else:
-                ci = ""
-            print("\n  r(log-frequency, recognised) = %+.4f%s   (n=%d)" % (r, ci, n))
-            print("  An interval spanning zero means recognition does not track frequency, so it")
-            print("  cannot be driving the frequency effect on divergence.")
-        else:
-            print("\n(no verb_up overlap with --freq file; skipped the frequency association)")
+    summarise(out, args.freq)
 
 
 if __name__ == "__main__":
