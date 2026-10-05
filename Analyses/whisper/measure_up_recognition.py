@@ -49,7 +49,7 @@ def parse_args():
     p.add_argument("--freq",
                    default=os.path.join(REPO, "Data", "olmo-3-7b", "Data_up",
                                         "all_layers_results.csv"),
-                   help="CSV with verb_up + frequency, to break results out by decile")
+                   help="CSV with verb_up + frequency, for the frequency association")
     p.add_argument("--model", default="openai/whisper-small")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--limit", type=int, default=None, help="only process the first N rows")
