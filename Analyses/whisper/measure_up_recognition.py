@@ -121,14 +121,15 @@ def main():
 
     # audio_path is stored relative to Analyses/whisper/, so resolve it against the repo rather
     # than the cwd; fall back to the literal value if that does not exist.
-    def resolve(p):
-        p = str(p)
-        if os.path.isabs(p) and os.path.exists(p):
-            return p
-        cand = os.path.normpath(os.path.join(REPO, "Analyses", "whisper", p))
-        return cand if os.path.exists(cand) else p
-
-    df = df.assign(audio_path=df["audio_path"].map(resolve))
+    # One stat() per row over 255k rows is minutes of silence on network storage, so probe a
+    # single path to decide whether rewriting is needed, then rewrite the column as a string op.
+    probe = str(df["audio_path"].iloc[0])
+    base = os.path.join(REPO, "Analyses", "whisper")
+    if not os.path.exists(probe) and os.path.exists(os.path.normpath(os.path.join(base, probe))):
+        print("resolving audio paths against %s" % base)
+        sys.stdout.flush()
+        df = df.assign(audio_path=base + os.sep + df["audio_path"].astype(str))
+        df = df.assign(audio_path=df["audio_path"].map(os.path.normpath))
 
     missing = [p for p in df["audio_path"].head(20) if not os.path.exists(p)]
     if missing:
@@ -150,7 +151,12 @@ def main():
     model = WhisperForConditionalGeneration.from_pretrained(args.model).to(args.device).eval()
 
     rows = []
-    for _, r in tqdm(df.iterrows(), total=len(df), desc="transcribing", unit="seg"):
+    bar = tqdm(df.iterrows(), total=len(df), desc="transcribing", unit="seg",
+               file=sys.stdout, dynamic_ncols=True, mininterval=1.0)
+    for i, (_, r) in enumerate(bar):
+        if i and i % 200 == 0:          # visible even when tqdm's bar is swallowed by a pipe
+            print("  ... %d/%d segments" % (i, len(df)))
+            sys.stdout.flush()
         try:
             audio, sr = sf.read(r["audio_path"])
             if sr != 16000:
@@ -160,7 +166,7 @@ def main():
             with torch.no_grad():
                 ids = model.generate(feats, max_new_tokens=200)
             hyp = normalise(processor.batch_decode(ids, skip_special_tokens=True)[0])
-        except Exception as e:                       # keep going; count as not-evaluated
+        except Exception as e:                   # keep going; count as not-evaluated
             rows.append({"verb_up": r.get("verb_up"), "ok": np.nan, "error": str(e)[:80]})
             continue
 
