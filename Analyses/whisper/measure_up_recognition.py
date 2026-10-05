@@ -18,10 +18,9 @@ NOTE. Recognition is scored per segment, not force-aligned to the token position
 containing another "up" could score as a hit. Segments with more than one "up" are dropped by the
 upstream data-quality filter, so this is rare; --strict additionally requires the bigram.
 
-Usage:
-    python measure_up_recognition.py --dataset ../../Data/whisper/dataset.csv \
-        --freq ../../Data/olmo-3-7b/Data_up/all_layers_results.csv --out up_recognition.csv
-    python measure_up_recognition.py --limit 500        # quick check
+Usage (paths default to the repo, so this runs from anywhere inside it):
+    python Analyses/whisper/measure_up_recognition.py
+    python Analyses/whisper/measure_up_recognition.py --limit 500     # quick check first
 """
 import argparse
 import os
