@@ -173,10 +173,9 @@ def main():
             if n_err <= 3:
                 print("  error on segment %d: %s" % (i, str(e)[:120]), flush=True)
             if i == 19 and n_err == 20:
-                sys.exit("
-every one of the first 20 segments failed -- aborting rather than "
-                         "grinding through %d rows producing nothing. See the errors above."
-                         % len(df))
+                sys.exit("every one of the first 20 segments failed; aborting rather "
+                         "than grinding through %d rows producing nothing. "
+                         "See the errors above." % len(df))
             rows.append({"verb_up": r.get("verb_up"), "ok": np.nan, "error": str(e)[:80]})
             continue
 
