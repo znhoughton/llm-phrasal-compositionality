@@ -18,6 +18,7 @@ paper/*
 !paper/writeup.qmd
 !paper/writeup.pdf
 !paper/prepare_results.R
+!paper/render-both.sh
 !paper/references.bib
 **/__pycache__/
 *.pyc
