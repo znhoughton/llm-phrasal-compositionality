@@ -2,7 +2,8 @@
 
 Probing the internal representations of language models to measure holistic storage of English V+*up* phrasal verbs (e.g. *pick up*, *set up*).
 
-> `paper/writeup.qmd` is the source of the paper and the only place its numbers are defined.
+> The paper's Quarto source, where every reported number is computed, is withheld while
+> the work is under double-blind review. The rendered PDF is in `paper/`.
 
 A logistic regression classifier is trained layer-by-layer on hidden states to distinguish standalone *up* tokens from random other tokens. The classifier's decision logit serves as a proxy for compositionality: high-frequency, idiomatic types (e.g. *end up*) should look less like standalone *up*, while low-frequency, transparent types should look more like it. We examine how this signal varies as a function of corpus frequency and predictability (P(up|V)) across layers in five models: OLMo-3 7B, three BabyLM OPT variants, and Whisper-small.
 
@@ -40,8 +41,7 @@ A logistic regression classifier is trained layer-by-layer on hidden states to d
 │   ├── babylm/{opt-125m,opt-350m,opt-1.3b}/
 │   └── whisper/{encoder,decoder}/
 ├── paper/
-│   ├── writeup.qmd            # the paper; every reported number is computed here
-│   ├── writeup.pdf            # rendered output
+│   ├── writeup.pdf            # rendered paper (source withheld during review)
 │   ├── prepare_results.R      # builds the result CSVs the paper reads
 │   └── references.bib
 └── model_cache/               # fitted .rds model objects — gitignored
@@ -54,25 +54,13 @@ and is gitignored; only the four files above are tracked.
 
 ## Building the paper
 
-`paper/writeup.qmd` produces both the anonymous and the named PDF from one source. The
-mode is passed on the command line rather than stored in the file:
-
-```bash
-cd paper
-
-# Both versions plus the arXiv bundle:
-bash render-both.sh
-
-# Or individually:
-quarto render writeup.qmd                      # review: anonymised, line-numbered
-quarto render writeup.qmd -M acl-mode:final    # named, with link footnotes
-```
-
-`acl-mode` is the only switch. It selects the author block, and the template reads
-`code-url` / `weights-url` from the YAML header (plus `anon-code-url` /
-`anon-weights-url` when set) to decide which link footnotes appear, so the anonymous
-and named builds come from one source. Rendering needs the `acl` Quarto extension
-installed under `paper/_extensions/`, which is not tracked here.
+The Quarto source is withheld while the work is under double-blind review, so the
+paper cannot be rebuilt from this repository as published. For the record, it builds
+from a single source: `acl-mode` is the only switch, selecting the author block, and
+the template reads `code-url` / `weights-url` from the YAML header (plus
+`anon-code-url` / `anon-weights-url` when set) to decide which link footnotes appear,
+so the anonymous and named versions come from the same file. `paper/render-both.sh`
+drives both builds and assembles the arXiv bundle.
 
 ---
 
