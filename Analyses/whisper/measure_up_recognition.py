@@ -36,13 +36,20 @@ from tqdm import tqdm
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
 
+# Defaults resolve against the repo, not the shell's cwd, so the script runs the same from
+# Analyses/whisper/ or from the repo root.
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dataset", default="../../Data/whisper/dataset.csv",
+    p.add_argument("--dataset", default=os.path.join(REPO, "Data", "whisper", "dataset.csv"),
                    help="dataset.csv with audio_path, verb_up, transcript")
-    p.add_argument("--freq", default=None,
-                   help="optional CSV with verb_up + frequency, to break results out by decile")
+    p.add_argument("--freq",
+                   default=os.path.join(REPO, "Data", "olmo-3-7b", "Data_up",
+                                        "all_layers_results.csv"),
+                   help="CSV with verb_up + frequency, to break results out by decile")
     p.add_argument("--model", default="openai/whisper-small")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--limit", type=int, default=None, help="only process the first N rows")
@@ -68,10 +75,22 @@ def main():
     if not len(df):
         sys.exit("no rows to process")
 
+    # audio_path is stored relative to Analyses/whisper/, so resolve it against the repo rather
+    # than the cwd; fall back to the literal value if that does not exist.
+    def resolve(p):
+        p = str(p)
+        if os.path.isabs(p) and os.path.exists(p):
+            return p
+        cand = os.path.normpath(os.path.join(REPO, "Analyses", "whisper", p))
+        return cand if os.path.exists(cand) else p
+
+    df = df.assign(audio_path=df["audio_path"].map(resolve))
+
     missing = [p for p in df["audio_path"].head(20) if not os.path.exists(p)]
     if missing:
-        sys.exit("audio not found (e.g. %s).\nRun this where the GigaSpeech wavs live, or pass "
-                 "--dataset with resolved paths." % missing[0])
+        sys.exit("audio not found, e.g.\n  %s\nThe GigaSpeech wavs are not in the repo. Run this "
+                 "where they live, or pass --dataset a CSV whose audio_path column points at "
+                 "them." % missing[0])
 
     processor = WhisperProcessor.from_pretrained(args.model)
     model = WhisperForConditionalGeneration.from_pretrained(args.model).to(args.device).eval()
