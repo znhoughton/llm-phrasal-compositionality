@@ -149,7 +149,7 @@ cd Analyses/
 python get_babylm_corpus_stats.py   # → Data/babylm_corpus_stats.pkl
 ```
 
-Downloads `znhoughton/babylm-150m-v3` from HuggingFace (~hours).
+Downloads `znhoughton/babylm-150m-v3` from HuggingFace (hours).
 
 ### Steps 2–4 — Run classifiers *(GPU required)*
 
@@ -174,7 +174,7 @@ python create_dataset.py
 # → Data/up-audio-metadata-subword.csv   (up-containing-word candidates, e.g. "update"/"upon" — Experiment 2 replication)
 ```
 
-Scans GigaSpeech + Common Voice transcripts directly from a local corpus mount (not via the HuggingFace `datasets` library — see the script's docstring for why). `Data/up-audio-metadata.csv` is already committed and authoritative, so this **skips regenerating it** unless the file is missing or `--force-dataset1` is passed; `Data/up-audio-metadata-subword.csv` is new and has no existing reference file, but follows the same skip-if-exists rule (`--force-dataset2` to override). `validate_reconstruction.py` compares this script's Dataset-1 output against the real file if you do need to regenerate it (100% recall, ~98% precision at full corpus scale, in the validation run this was checked against).
+Scans GigaSpeech + Common Voice transcripts directly from a local corpus mount (not via the HuggingFace `datasets` library — see the script's docstring for why). `Data/up-audio-metadata.csv` is already committed and authoritative, so this **skips regenerating it** unless the file is missing or `--force-dataset1` is passed; `Data/up-audio-metadata-subword.csv` is new and has no existing reference file, but follows the same skip-if-exists rule (`--force-dataset2` to override). `validate_reconstruction.py` compares this script's Dataset-1 output against the real file if you do need to regenerate it (100% recall, about 98% precision at full corpus scale, in the validation run this was checked against).
 
 ### Step 2 — Extract audio + align *(one-time, GPU recommended for WhisperX)*
 
@@ -255,7 +255,7 @@ Extracts all 12 encoder + 12 decoder layers in a single forward pass per segment
 | BabyLM 350M | 81,543 | 4,082 | 1,039 |
 | BabyLM 1.3B | 80,425 | 4,081 | 1,039 |
 
-BabyLM has fewer types with valid predictability because the BabyLM corpus (~100M words) is much smaller than Dolma.
+BabyLM has fewer types with valid predictability because the BabyLM corpus (about 100M words) is much smaller than Dolma.
 
 **Item-level statistics (unique V+up types with valid predictability):**
 
